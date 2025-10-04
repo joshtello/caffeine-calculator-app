@@ -1,0 +1,132 @@
+[
+  {
+    "name": "Coffee (8oz)",
+    "caffeine": 95,
+    "category": "Coffee"
+  },
+  {
+    "name": "Coffee (12oz)",
+    "caffeine": 142,
+    "category": "Coffee"
+  },
+  {
+    "name": "Coffee (16oz)",
+    "caffeine": 189,
+    "category": "Coffee"
+  },
+  {
+    "name": "Espresso (1oz)",
+    "caffeine": 64,
+    "category": "Coffee"
+  },
+  {
+    "name": "Americano (8oz)",
+    "caffeine": 77,
+    "category": "Coffee"
+  },
+  {
+    "name": "Latte (12oz)",
+    "caffeine": 77,
+    "category": "Coffee"
+  },
+  {
+    "name": "Cappuccino (12oz)",
+    "caffeine": 77,
+    "category": "Coffee"
+  },
+  {
+    "name": "Mocha (12oz)",
+    "caffeine": 95,
+    "category": "Coffee"
+  },
+  {
+    "name": "Cold Brew (12oz)",
+    "caffeine": 155,
+    "category": "Coffee"
+  },
+  {
+    "name": "Decaf Coffee (8oz)",
+    "caffeine": 2,
+    "category": "Coffee"
+  },
+  {
+    "name": "Black Tea (8oz)",
+    "caffeine": 47,
+    "category": "Tea"
+  },
+  {
+    "name": "Green Tea (8oz)",
+    "caffeine": 28,
+    "category": "Tea"
+  },
+  {
+    "name": "White Tea (8oz)",
+    "caffeine": 32,
+    "category": "Tea"
+  },
+  {
+    "name": "Oolong Tea (8oz)",
+    "caffeine": 37,
+    "category": "Tea"
+  },
+  {
+    "name": "Chai Tea (8oz)",
+    "caffeine": 47,
+    "category": "Tea"
+  },
+  {
+    "name": "Red Bull (8.4oz)",
+    "caffeine": 80,
+    "category": "Energy Drink"
+  },
+  {
+    "name": "Monster Energy (16oz)",
+    "caffeine": 160,
+    "category": "Energy Drink"
+  },
+  {
+    "name": "Rockstar (16oz)",
+    "caffeine": 160,
+    "category": "Energy Drink"
+  },
+  {
+    "name": "5-Hour Energy (2oz)",
+    "caffeine": 200,
+    "category": "Energy Shot"
+  },
+  {
+    "name": "Coca-Cola (12oz)",
+    "caffeine": 34,
+    "category": "Soda"
+  },
+  {
+    "name": "Pepsi (12oz)",
+    "caffeine": 38,
+    "category": "Soda"
+  },
+  {
+    "name": "Dr Pepper (12oz)",
+    "caffeine": 41,
+    "category": "Soda"
+  },
+  {
+    "name": "Mountain Dew (12oz)",
+    "caffeine": 54,
+    "category": "Soda"
+  },
+  {
+    "name": "Hot Chocolate (8oz)",
+    "caffeine": 8,
+    "category": "Other"
+  },
+  {
+    "name": "Dark Chocolate (1oz)",
+    "caffeine": 12,
+    "category": "Other"
+  },
+  {
+    "name": "Matcha (1 tsp)",
+    "caffeine": 68,
+    "category": "Tea"
+  }
+]
