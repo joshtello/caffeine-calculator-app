@@ -1005,7 +1005,7 @@ export default function CaffeineCalculator() {
                 )}
               </div>
               <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-lg ${
-                isDarkMode ? 'bg-blue-900' : 'bg-gray-200'
+                isDarkMode ? 'bg-blue-900' : 'bg-blue-50'
               }`}>
                 <div>
                   <label className={`block text-sm font-medium mb-2 ${
@@ -1107,7 +1107,7 @@ export default function CaffeineCalculator() {
                   <span className={`text-sm px-3 py-1 rounded-full ${
                     isDarkMode 
                       ? 'text-blue-400 bg-blue-900' 
-                      : 'text-gray-700 bg-gray-300'
+                      : 'text-blue-600 bg-blue-50'
                   }`}>
                     {todayData.reduce((sum, drink) => sum + drink.dose, 0)} mg logged today
                     {todayData.reduce((sum, drink) => sum + drink.dose, 0) >= 400 && (
@@ -1120,8 +1120,8 @@ export default function CaffeineCalculator() {
               {drinks.map((drink, index) => (
                 <div key={drink.id} className={`border rounded-lg p-4 ${
                   drink.isLogged 
-                    ? `border-blue-200 ${isDarkMode ? 'bg-blue-900' : 'bg-gray-300'}` 
-                    : `border-gray-200 ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'}`
+                    ? `border-blue-200 ${isDarkMode ? 'bg-blue-900' : 'bg-blue-50'}` 
+                    : `border-gray-200 ${isDarkMode ? 'bg-gray-700' : 'bg-gray-100'}`
                 }`}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center space-x-2">
@@ -1303,10 +1303,10 @@ export default function CaffeineCalculator() {
                   <div className={`mt-2 p-3 border rounded-md ${
                     isDarkMode 
                       ? 'bg-blue-900 border-blue-700' 
-                      : 'bg-gray-300 border-gray-400'
+                      : 'bg-blue-50 border-blue-200'
                   }`}>
                     <p className={`text-sm ${
-                      isDarkMode ? 'text-blue-300' : 'text-gray-700'
+                      isDarkMode ? 'text-blue-300' : 'text-blue-700'
                     }`}>
                       💡 <strong>Tip:</strong> If you don't enter an end time, the drink will be treated as "instant" (consumed all at once at the start time). 
                       Enter an end time to model gradual consumption over a period.
@@ -1380,8 +1380,8 @@ export default function CaffeineCalculator() {
                   <div 
                     className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 cursor-pointer hover:shadow-md ${
                       day.isToday 
-                        ? `border-blue-200 hover:border-blue-300 ${isDarkMode ? 'bg-blue-900 hover:bg-blue-800' : 'bg-gray-300 hover:bg-gray-400'}` 
-                        : `border-gray-200 hover:border-gray-300 ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`
+                        ? `border-blue-200 hover:border-blue-300 ${isDarkMode ? 'bg-blue-900 hover:bg-blue-800' : 'bg-blue-50 hover:bg-blue-100'}` 
+                        : `border-gray-200 hover:border-gray-300 ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`
                     }`}
                   >
                     <div className="flex justify-between items-center mb-2">
@@ -1441,7 +1441,7 @@ export default function CaffeineCalculator() {
             <div className="space-y-4">
               {/* Daily Intake Summary */}
               <div className={`p-4 rounded-lg ${
-                isDarkMode ? 'bg-blue-900' : 'bg-gray-300'
+                isDarkMode ? 'bg-blue-900' : 'bg-blue-50'
               }`}>
                 <p className={`text-lg ${
                   isDarkMode ? 'text-gray-300' : 'text-gray-700'
@@ -1486,7 +1486,7 @@ export default function CaffeineCalculator() {
               </div>
               
               <div className={`p-4 rounded-lg ${
-                isDarkMode ? 'bg-blue-900' : 'bg-gray-300'
+                isDarkMode ? 'bg-blue-900' : 'bg-blue-50'
               }`}>
                 <p className={`text-lg ${
                   isDarkMode ? 'text-gray-300' : 'text-gray-700'
