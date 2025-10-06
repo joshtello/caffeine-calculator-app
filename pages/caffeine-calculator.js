@@ -69,10 +69,11 @@ export default function CaffeineCalculator() {
   const [todayData, setTodayData] = useState([])
   const [historyData, setHistoryData] = useState([])
   const [showHistory, setShowHistory] = useState(false)
+  const [isDarkMode, setIsDarkMode] = useState(false)
 
   const baseHalfLife = 5 // hours
   const safeSleepThreshold = 30 // mg
-
+  
   // Calculate chart hours based on bedtime and drink times
   const chartHours = useMemo(() => {
     if (!bedtime) return 24 // Default to 24 hours if no bedtime set
@@ -226,6 +227,24 @@ export default function CaffeineCalculator() {
       saveBedtime(bedtime)
     }
   }, [bedtime])
+
+  // Load dark mode preference from localStorage
+  useEffect(() => {
+    const savedDarkMode = localStorage.getItem('cupacity-dark-mode')
+    if (savedDarkMode !== null) {
+      setIsDarkMode(JSON.parse(savedDarkMode))
+    }
+  }, [])
+
+  // Save dark mode preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('cupacity-dark-mode', JSON.stringify(isDarkMode))
+  }, [isDarkMode])
+
+  // Toggle dark mode
+  const toggleDarkMode = () => {
+    setIsDarkMode(!isDarkMode)
+  }
 
   // Auto-calculate results when data changes
   useEffect(() => {
@@ -472,16 +491,16 @@ export default function CaffeineCalculator() {
     // Fallback to original instant absorption model using startTime as intake time
     if (startTime) {
       const intake = new Date(`2000-01-01T${startTime}`)
-      
-      // Handle case where bedtime is next day
-      if (bed < intake) {
-        bed.setDate(bed.getDate() + 1)
-      }
-      
-      const hoursElapsed = (bed - intake) / (1000 * 60 * 60)
-      const caffeineLeft = dose * Math.pow(0.5, hoursElapsed / halfLife)
-      
-      return Math.max(0, caffeineLeft)
+    
+    // Handle case where bedtime is next day
+    if (bed < intake) {
+      bed.setDate(bed.getDate() + 1)
+    }
+    
+    const hoursElapsed = (bed - intake) / (1000 * 60 * 60)
+    const caffeineLeft = dose * Math.pow(0.5, hoursElapsed / halfLife)
+    
+    return Math.max(0, caffeineLeft)
     }
     
     return 0 // No valid time information
@@ -943,33 +962,66 @@ export default function CaffeineCalculator() {
 
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
+    <div className={`min-h-screen py-8 px-4 ${isDarkMode ? 'bg-gray-900' : 'bg-gray-200'}`}>
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-900 text-center mb-8">
-          Cupacity
+        <div className="flex justify-between items-center mb-8">
+          <h1 className={`text-3xl font-bold text-center flex-1 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+            Cupacity
         </h1>
+          <button
+            onClick={toggleDarkMode}
+            className={`p-2 rounded-lg transition-colors duration-200 ${
+              isDarkMode 
+                ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' 
+                : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+            }`}
+            title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDarkMode ? (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+              </svg>
+            )}
+          </button>
+        </div>
         
-        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+        <div className={`rounded-lg shadow-md p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
           <form className="space-y-6">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">Personal Information</h2>
+                <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Personal Information</h2>
                 {(personalInfo.age || personalInfo.sex || personalInfo.weight) && (
-                  <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
+                  <span className={`text-xs px-2 py-1 rounded-full ${
+                    isDarkMode 
+                      ? 'text-green-400 bg-green-900' 
+                      : 'text-green-700 bg-green-200'
+                  }`}>
                     ✓ Auto-saved
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-blue-50 rounded-lg">
+              <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-lg ${
+                isDarkMode ? 'bg-blue-900' : 'bg-gray-200'
+              }`}>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
                     Age
                   </label>
                   <input
                     type="number"
                     value={personalInfo.age}
                     onChange={(e) => setPersonalInfo({...personalInfo, age: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                        : 'bg-gray-50 border-gray-400 text-gray-900'
+                    }`}
                     placeholder="e.g., 25"
                     min="1"
                     max="120"
@@ -977,13 +1029,19 @@ export default function CaffeineCalculator() {
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
                     Sex
                   </label>
                   <select
                     value={personalInfo.sex}
                     onChange={(e) => setPersonalInfo({...personalInfo, sex: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                        : 'bg-gray-50 border-gray-400 text-gray-900'
+                    }`}
                   >
                     <option value="">Select...</option>
                     <option value="male">Male</option>
@@ -1025,7 +1083,11 @@ export default function CaffeineCalculator() {
                     type="number"
                     value={personalInfo.weight}
                     onChange={(e) => setPersonalInfo({...personalInfo, weight: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                        : 'bg-gray-50 border-gray-400 text-gray-900'
+                    }`}
                     placeholder={units.weight === 'metric' ? "e.g., 70" : "e.g., 154"}
                     min={units.weight === 'metric' ? "30" : "66"}
                     max={units.weight === 'metric' ? "300" : "660"}
@@ -1040,9 +1102,13 @@ export default function CaffeineCalculator() {
             
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">Your Drinks</h2>
+                <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Your Drinks</h2>
                 {todayData.length > 0 && (
-                  <span className="text-sm text-gray-600 bg-blue-50 px-3 py-1 rounded-full">
+                  <span className={`text-sm px-3 py-1 rounded-full ${
+                    isDarkMode 
+                      ? 'text-blue-400 bg-blue-900' 
+                      : 'text-gray-700 bg-gray-300'
+                  }`}>
                     {todayData.reduce((sum, drink) => sum + drink.dose, 0)} mg logged today
                     {todayData.reduce((sum, drink) => sum + drink.dose, 0) >= 400 && (
                       <span className="ml-1 text-orange-600">⚠️</span>
@@ -1054,8 +1120,8 @@ export default function CaffeineCalculator() {
               {drinks.map((drink, index) => (
                 <div key={drink.id} className={`border rounded-lg p-4 ${
                   drink.isLogged 
-                    ? 'border-blue-200 bg-blue-50' 
-                    : 'border-gray-200 bg-gray-50'
+                    ? `border-blue-200 ${isDarkMode ? 'bg-blue-900' : 'bg-gray-300'}` 
+                    : `border-gray-200 ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'}`
                 }`}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center space-x-2">
@@ -1069,13 +1135,21 @@ export default function CaffeineCalculator() {
                           <button
                             onClick={() => handleDrinkDone(drink.id)}
                             disabled={!drink.name || !drink.dose || parseFloat(drink.dose) <= 0 || !drink.startTimeString}
-                            className="px-2 py-1 text-xs bg-green-100 hover:bg-green-200 text-green-700 rounded transition duration-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                            className={`px-2 py-1 text-xs rounded transition duration-200 disabled:cursor-not-allowed ${
+                            isDarkMode 
+                              ? 'bg-green-900 hover:bg-green-800 text-green-300 disabled:bg-gray-800 disabled:text-gray-500' 
+                              : 'bg-green-100 hover:bg-green-200 text-green-700 disabled:bg-gray-100 disabled:text-gray-400'
+                          }`}
                           >
                             Done
                           </button>
                           <button
                             onClick={() => cancelEditing(drink.id)}
-                            className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition duration-200"
+                            className={`px-2 py-1 text-xs rounded transition duration-200 ${
+                              isDarkMode 
+                                ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                            }`}
                           >
                             Cancel
                           </button>
@@ -1083,7 +1157,11 @@ export default function CaffeineCalculator() {
                       ) : (
                         <button
                           onClick={() => startEditing(drink.id)}
-                          className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded transition duration-200"
+                          className={`px-2 py-1 text-xs rounded transition duration-200 ${
+                          isDarkMode 
+                            ? 'bg-blue-900 hover:bg-blue-800 text-blue-300' 
+                            : 'bg-blue-100 hover:bg-blue-200 text-blue-700'
+                        }`}
                         >
                           Edit
                         </button>
@@ -1099,7 +1177,9 @@ export default function CaffeineCalculator() {
                   
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
                         Select Drink (Optional)
                       </label>
                       <Select
@@ -1136,22 +1216,30 @@ export default function CaffeineCalculator() {
                       {/* Custom drink name input - show when editing and no drink selected from database */}
                       {drink.isEditing && (
                         <div className="mt-3">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
                             Custom Drink Name
-                          </label>
-                          <input
-                            type="text"
+                        </label>
+                        <input
+                          type="text"
                             value={drink.name || ''}
-                            onChange={(e) => updateDrink(drink.id, 'name', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          onChange={(e) => updateDrink(drink.id, 'name', e.target.value)}
+                            className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                        : 'bg-gray-50 border-gray-400 text-gray-900'
+                    }`}
                             placeholder="e.g., My Custom Coffee Blend"
-                          />
-                        </div>
+                        />
+                      </div>
                       )}
                     </div>
                     
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
                         Caffeine Dose (mg)
                       </label>
                       <input
@@ -1159,7 +1247,11 @@ export default function CaffeineCalculator() {
                         value={drink.dose}
                         onChange={(e) => updateDrink(drink.id, 'dose', e.target.value)}
                         disabled={!drink.isEditing}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:cursor-not-allowed ${
+                          isDarkMode 
+                            ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400 disabled:bg-gray-800' 
+                            : 'bg-gray-50 border-gray-400 text-gray-900 disabled:bg-gray-200'
+                        }`}
                         placeholder="e.g., 200"
                         min="0"
                         step="0.1"
@@ -1170,7 +1262,9 @@ export default function CaffeineCalculator() {
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
                         Start Time
                       </label>
                       <input
@@ -1178,12 +1272,18 @@ export default function CaffeineCalculator() {
                         value={drink.startTimeString || ''}
                         onChange={(e) => updateDrink(drink.id, 'startTimeString', e.target.value)}
                         disabled={!drink.isEditing}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:cursor-not-allowed ${
+                          isDarkMode 
+                            ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400 disabled:bg-gray-800' 
+                            : 'bg-gray-50 border-gray-400 text-gray-900 disabled:bg-gray-200'
+                        }`}
                       />
                     </div>
                     
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
                         End Time <span className="text-gray-500 font-normal">(optional)</span>
                       </label>
                       <input
@@ -1191,13 +1291,23 @@ export default function CaffeineCalculator() {
                         value={drink.endTimeString || ''}
                         onChange={(e) => updateDrink(drink.id, 'endTimeString', e.target.value)}
                         disabled={!drink.isEditing}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:cursor-not-allowed ${
+                          isDarkMode 
+                            ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400 disabled:bg-gray-800' 
+                            : 'bg-gray-50 border-gray-400 text-gray-900 disabled:bg-gray-200'
+                        }`}
                       />
                     </div>
                   </div>
                   
-                  <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                    <p className="text-sm text-blue-700">
+                  <div className={`mt-2 p-3 border rounded-md ${
+                    isDarkMode 
+                      ? 'bg-blue-900 border-blue-700' 
+                      : 'bg-gray-300 border-gray-400'
+                  }`}>
+                    <p className={`text-sm ${
+                      isDarkMode ? 'text-blue-300' : 'text-gray-700'
+                    }`}>
                       💡 <strong>Tip:</strong> If you don't enter an end time, the drink will be treated as "instant" (consumed all at once at the start time). 
                       Enter an end time to model gradual consumption over a period.
                     </p>
@@ -1209,7 +1319,11 @@ export default function CaffeineCalculator() {
               <button
                 type="button"
                 onClick={addDrink}
-                className="w-full border-2 border-dashed border-gray-300 rounded-lg py-4 text-gray-600 hover:border-blue-500 hover:text-blue-500 transition duration-200"
+                className={`w-full border-2 border-dashed rounded-lg py-4 transition duration-200 ${
+                  isDarkMode 
+                    ? 'border-gray-600 text-gray-400 hover:border-blue-400 hover:text-blue-400' 
+                    : 'border-gray-300 text-gray-600 hover:border-blue-500 hover:text-blue-500'
+                }`}
               >
                 + Add Another Drink
               </button>
@@ -1217,7 +1331,9 @@ export default function CaffeineCalculator() {
             
             <div className="border-t pt-6">
               <div className="max-w-xs">
-                <label htmlFor="bedtime" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="bedtime" className={`block text-sm font-medium mb-2 ${
+                  isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
                   Bedtime
                 </label>
                 <input
@@ -1225,7 +1341,11 @@ export default function CaffeineCalculator() {
                   id="bedtime"
                   value={bedtime}
                   onChange={(e) => setBedtime(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      isDarkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                        : 'bg-gray-50 border-gray-400 text-gray-900'
+                    }`}
                 />
               </div>
             </div>
@@ -1234,12 +1354,16 @@ export default function CaffeineCalculator() {
         </div>
         
         {/* History Section */}
-        <div className="bg-white rounded-lg shadow-md p-4 sm:p-6 mb-8">
+        <div className={`rounded-lg shadow-md p-4 sm:p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 space-y-2 sm:space-y-0">
-            <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Caffeine History</h2>
+            <h2 className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Caffeine History</h2>
             <button
               onClick={() => setShowHistory(!showHistory)}
-              className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition duration-200 self-start sm:self-auto"
+              className={`px-3 py-2 text-sm rounded-md transition duration-200 self-start sm:self-auto ${
+              isDarkMode 
+                ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+            }`}
             >
               {showHistory ? 'Hide' : 'Show'} Past 7 Days
             </button>
@@ -1256,8 +1380,8 @@ export default function CaffeineCalculator() {
                   <div 
                     className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 cursor-pointer hover:shadow-md ${
                       day.isToday 
-                        ? 'bg-blue-50 border-blue-200 hover:bg-blue-100 hover:border-blue-300' 
-                        : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                        ? `border-blue-200 hover:border-blue-300 ${isDarkMode ? 'bg-blue-900 hover:bg-blue-800' : 'bg-gray-300 hover:bg-gray-400'}` 
+                        : `border-gray-200 hover:border-gray-300 ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`
                     }`}
                   >
                     <div className="flex justify-between items-center mb-2">
@@ -1312,12 +1436,16 @@ export default function CaffeineCalculator() {
         </div>
         
         {result !== null && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Results</h2>
+          <div className={`rounded-lg shadow-md p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+            <h2 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Results</h2>
             <div className="space-y-4">
               {/* Daily Intake Summary */}
-              <div className="p-4 bg-blue-50 rounded-lg">
-                <p className="text-lg text-gray-700">
+              <div className={`p-4 rounded-lg ${
+                isDarkMode ? 'bg-blue-900' : 'bg-gray-300'
+              }`}>
+                <p className={`text-lg ${
+                  isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
                   Total daily caffeine intake: <span className="font-bold text-blue-600">{dailyIntake} mg</span>
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
@@ -1357,8 +1485,12 @@ export default function CaffeineCalculator() {
                 })()}
               </div>
               
-              <div className="p-4 bg-blue-50 rounded-lg">
-                <p className="text-lg text-gray-700">
+              <div className={`p-4 rounded-lg ${
+                isDarkMode ? 'bg-blue-900' : 'bg-gray-300'
+              }`}>
+                <p className={`text-lg ${
+                  isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
                   Your adjusted caffeine half-life: <span className="font-bold text-blue-600">{adjustedHalfLife.toFixed(1)} hours</span>
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
@@ -1388,11 +1520,11 @@ export default function CaffeineCalculator() {
         )}
         
         {chartData && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">
+          <div className={`rounded-lg shadow-md p-6 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+            <h2 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
               Caffeine Levels Over {chartHours > 24 ? '48 Hours' : '24 Hours'}
             </h2>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className={`text-sm mb-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
               Each line represents a different drink. The chart shows how caffeine from each drink decays over time.
               {chartHours > 24 && " The chart extends to 48 hours to show bedtimes and caffeine effects past midnight."}
             </p>
