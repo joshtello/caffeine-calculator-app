@@ -6,11 +6,15 @@ export const getTodayDate = () => {
 }
 
 export const saveDailyData = (date, drinks) => {
-  const validDrinks = drinks.filter(drink => drink.dose && drink.intakeTime)
+  const validDrinks = drinks.filter(drink => drink.dose && drink.startTimeString)
   const dailyData = validDrinks.map(drink => ({
     name: drink.name || 'Unnamed drink',
-    time: drink.intakeTime,
-    dose: parseFloat(drink.dose)
+    time: drink.startTimeString, // Use startTimeString as the main time for backward compatibility
+    dose: parseFloat(drink.dose),
+    startTime: drink.startTime || Date.now(),
+    endTime: drink.endTime || Date.now(),
+    startTimeString: drink.startTimeString || '',
+    endTimeString: drink.endTimeString || ''
   }))
   
   localStorage.setItem(getStorageKey(date), JSON.stringify(dailyData))
@@ -127,7 +131,11 @@ export const addQuickDrink = (date, drink) => {
   const newDrink = {
     name: drink.name || 'Quick drink',
     time: drink.time || new Date().toTimeString().slice(0, 5), // Current time as HH:MM
-    dose: parseFloat(drink.dose) || 0
+    dose: parseFloat(drink.dose) || 0,
+    startTime: drink.startTime || Date.now(),
+    endTime: drink.endTime || Date.now(),
+    startTimeString: drink.startTimeString || '',
+    endTimeString: drink.endTimeString || ''
   }
   dailyData.push(newDrink)
   localStorage.setItem(getStorageKey(date), JSON.stringify(dailyData))
@@ -138,3 +146,4 @@ export const addQuickDrink = (date, drink) => {
 export const generateStableId = () => {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9)
 }
+

@@ -4,12 +4,25 @@ export const verticalLinePlugin = {
   afterDraw: (chart) => {
     const { ctx, chartArea, scales } = chart
     const bedtime = chart.options.plugins?.verticalLine?.bedtime
+    const chartHours = chart.options.plugins?.verticalLine?.chartHours || 24
     
     if (!bedtime || !chartArea) return
     
     // Convert bedtime to chart position
     const bedtimeHour = parseInt(bedtime.split(':')[0])
-    const x = scales.x.getPixelForValue(bedtimeHour)
+    const bedtimeMinute = parseInt(bedtime.split(':')[1]) || 0
+    
+    // Calculate the correct chart position
+    let chartPosition
+    if (chartHours > 24 && bedtimeHour < 12) {
+      // Bedtime is next day in extended chart
+      chartPosition = bedtimeHour + 24 + (bedtimeMinute / 60)
+    } else {
+      // Bedtime is same day
+      chartPosition = bedtimeHour + (bedtimeMinute / 60)
+    }
+    
+    const x = scales.x.getPixelForValue(chartPosition)
     
     // Draw vertical line
     ctx.save()
@@ -29,3 +42,4 @@ export const verticalLinePlugin = {
     ctx.restore()
   }
 }
+

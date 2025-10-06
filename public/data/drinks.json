@@ -1,5 +1,11 @@
 [
   {
+    "name": "Instant",
+    "caffeine": 0,
+    "category": "Special",
+    "isInstant": true
+  },
+  {
     "name": "Coffee (8oz)",
     "caffeine": 95,
     "category": "Coffee"

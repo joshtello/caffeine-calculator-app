@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Line } from 'react-chartjs-2'
 import Select from 'react-select'
 import Link from 'next/link'
@@ -47,7 +47,7 @@ ChartJS.register(
 
 export default function CaffeineCalculator() {
   const [drinks, setDrinks] = useState([
-    { id: 1, name: '', dose: '', intakeTime: '' }
+    { id: 1, name: '', dose: '', intakeTime: '', startTime: Date.now(), endTime: Date.now(), startTimeString: '', endTimeString: '', isEditing: false }
   ])
   const [drinksDatabase, setDrinksDatabase] = useState([])
   const [recentDrinks, setRecentDrinks] = useState([])
@@ -72,17 +72,90 @@ export default function CaffeineCalculator() {
 
   const baseHalfLife = 5 // hours
   const safeSleepThreshold = 30 // mg
+
+  // Calculate chart hours based on bedtime and drink times
+  const chartHours = useMemo(() => {
+    if (!bedtime) return 24 // Default to 24 hours if no bedtime set
+    
+    // Check if bedtime is past midnight (likely next day)
+    const bedtimeHour = parseInt(bedtime.split(':')[0])
+    if (bedtimeHour < 12) return 48 // Bedtime is likely next day (like 01:00, 02:00, etc.)
+    
+    // Check if any drink's end time extends past midnight
+    const needsExtension = drinks.some(drink => {
+      if (drink.endTimeString) {
+        const endHour = parseInt(drink.endTimeString.split(':')[0])
+        return endHour < 12 // End time is likely next day
+      }
+      return false
+    })
+    
+    return needsExtension ? 48 : 24
+  }, [drinks, bedtime])
+
+  // Helper function to calculate caffeine curve (instant or gradual)
+  const calculateCaffeineCurve = (startTime, endTime, caffeineMg, halfLifeHours = 5) => {
+    const minutesToAbsorb = Math.max(1, (new Date(endTime) - new Date(startTime)) / 60000);
+    const dataPoints = [];
+    
+    // Generate points for 24 hours from start time
+    const totalMinutes = 24 * 60;
+    
+    // Check if this is instant consumption (startTime === endTime)
+    const isInstant = minutesToAbsorb <= 1;
+    
+    if (isInstant) {
+      // Instant consumption - full dose immediately, then decay
+      for (let i = 0; i <= totalMinutes; i++) {
+        const currentTime = new Date(new Date(startTime).getTime() + i * 60000);
+        const hoursSinceConsumption = i / 60;
+        
+        // Full dose at time 0, then decay
+        const caffeine = caffeineMg * Math.pow(0.5, hoursSinceConsumption / halfLifeHours);
+        
+        dataPoints.push({
+          time: currentTime,
+          caffeine: Math.max(0, caffeine)
+        });
+      }
+    } else {
+      // Gradual absorption over time
+      const absorptionRate = caffeineMg / minutesToAbsorb;
+      
+      for (let i = 0; i <= totalMinutes; i++) {
+        const currentTime = new Date(new Date(startTime).getTime() + i * 60000);
+        
+        let caffeine = 0;
+        
+        if (i <= minutesToAbsorb) {
+          // During absorption period - show gradual increase
+          const absorbed = absorptionRate * i; // caffeine absorbed so far
+          caffeine = absorbed; // No decay during absorption
+        } else {
+          // After absorption period - full dose is absorbed, now decay
+          const hoursSinceEndOfAbsorption = (i - minutesToAbsorb) / 60;
+          caffeine = caffeineMg * Math.pow(0.5, hoursSinceEndOfAbsorption / halfLifeHours);
+        }
+        
+        dataPoints.push({
+          time: currentTime,
+          caffeine: Math.max(0, caffeine)
+        });
+      }
+    }
+    return dataPoints;
+  };
   
-  // Helper function to sort drinks by intake time
+  // Helper function to sort drinks by start time
   const sortDrinksByTime = (drinksList) => {
     return [...drinksList].sort((a, b) => {
       // Put drinks without time at the end
-      if (!a.intakeTime && !b.intakeTime) return 0
-      if (!a.intakeTime) return 1
-      if (!b.intakeTime) return -1
+      if (!a.startTimeString && !b.startTimeString) return 0
+      if (!a.startTimeString) return 1
+      if (!b.startTimeString) return -1
       
       // Compare times
-      return a.intakeTime.localeCompare(b.intakeTime)
+      return a.startTimeString.localeCompare(b.startTimeString)
     })
   }
   
@@ -105,6 +178,10 @@ export default function CaffeineCalculator() {
       name: drink.name,
       dose: drink.dose.toString(),
       intakeTime: drink.time,
+      startTime: drink.startTime || Date.now(),
+      endTime: drink.endTime || Date.now(),
+      startTimeString: drink.startTimeString || '',
+      endTimeString: drink.endTimeString || '',
       isLogged: true,
       loggedIndex: index
     }))
@@ -149,6 +226,64 @@ export default function CaffeineCalculator() {
       saveBedtime(bedtime)
     }
   }, [bedtime])
+
+  // Auto-calculate results when data changes
+  useEffect(() => {
+    if (!bedtime || !personalInfo.age || !personalInfo.sex || !personalInfo.weight) {
+      return // Don't calculate if required info is missing
+    }
+    
+    const validDrinks = drinks.filter(drink => drink.dose && drink.startTimeString)
+    if (validDrinks.length === 0) {
+      return // Don't calculate if no valid drinks
+    }
+    
+    // Calculate adjusted half-life based on personal info
+    const halfLife = calculateAdjustedHalfLife(personalInfo, units)
+    setAdjustedHalfLife(halfLife)
+    
+    // Calculate individual cutoff times for each drink
+    const individualCutoffTimes = calculateIndividualCutoffTimes(validDrinks, bedtime, halfLife)
+    setIndividualCutoffs(individualCutoffTimes)
+    
+    // Calculate daily intake and warning messages
+    const totalDailyIntake = calculateDailyIntake(validDrinks)
+    setDailyIntake(totalDailyIntake)
+    
+    // Check for warnings
+    const dailyWarning = getWarningMessage(totalDailyIntake)
+    const typoWarning = checkForTypo(validDrinks)
+    
+    // Set warning message (prioritize typo detection over daily intake warnings)
+    if (typoWarning) {
+      setWarningMessage(typoWarning)
+    } else if (dailyWarning) {
+      setWarningMessage(dailyWarning)
+    } else {
+      setWarningMessage(null)
+    }
+    
+    // Calculate total caffeine remaining at bedtime
+    let totalCaffeineLeft = 0
+    validDrinks.forEach(drink => {
+      const caffeineLeft = calculateCaffeineRemaining(
+        parseFloat(drink.dose),
+        bedtime,
+        halfLife,
+        drink.startTimeString,
+        drink.endTimeString
+      )
+      totalCaffeineLeft += caffeineLeft
+    })
+    
+    setResult(totalCaffeineLeft)
+    setChartData(generateChartData(validDrinks, bedtime, halfLife, chartHours))
+    
+    // Save today's data to localStorage
+    const today = getTodayDate()
+    saveDailyData(today, validDrinks)
+    setTodayData(loadDailyData(today))
+  }, [drinks, bedtime, personalInfo, units, chartHours])
   
   const getCaffeineZone = (caffeineLevel) => {
     if (caffeineLevel < 30) {
@@ -269,19 +404,87 @@ export default function CaffeineCalculator() {
     return Math.max(1, adjustedHalfLife) // Minimum 1 hour
   }
 
-  const calculateCaffeineRemaining = (dose, intakeTime, bedtime, halfLife) => {
-    const intake = new Date(`2000-01-01T${intakeTime}`)
+  const calculateCaffeineRemaining = (dose, bedtime, halfLife, startTime = null, endTime = null) => {
     const bed = new Date(`2000-01-01T${bedtime}`)
     
-    // Handle case where bedtime is next day
-    if (bed < intake) {
-      bed.setDate(bed.getDate() + 1)
+    // If we have startTime, use it (with or without endTime)
+    if (startTime) {
+      // If no endTime provided, treat as instant (startTime === endTime)
+      const effectiveEndTime = endTime || startTime
+      // Convert time strings to Date objects for today
+      const today = new Date()
+      const startDateTime = new Date(today.toDateString() + ' ' + startTime)
+      const endDateTime = new Date(today.toDateString() + ' ' + effectiveEndTime)
+      const bedtimeDateTime = new Date(today.toDateString() + ' ' + bedtime)
+      
+      // Handle case where bedtime is next day
+      if (bedtimeDateTime < startDateTime) {
+        bedtimeDateTime.setDate(bedtimeDateTime.getDate() + 1)
+      }
+      
+      // Check if this is instant consumption
+      const minutesToAbsorb = Math.max(1, (endDateTime - startDateTime) / 60000)
+      const isInstant = minutesToAbsorb <= 1
+      
+      if (isInstant) {
+        // Instant consumption - use simple decay formula
+        const bedtimeDateTime = new Date(today.toDateString() + ' ' + bedtime)
+        
+        // Handle case where bedtime is next day
+        if (bedtimeDateTime < startDateTime) {
+          bedtimeDateTime.setDate(bedtimeDateTime.getDate() + 1)
+        }
+        
+        const hoursSinceConsumption = (bedtimeDateTime - startDateTime) / (1000 * 60 * 60)
+        
+        if (hoursSinceConsumption < 0) {
+          return 0 // Bedtime is before consumption
+        }
+        
+        const caffeineAtBedtime = dose * Math.pow(0.5, hoursSinceConsumption / halfLife)
+        return Math.max(0, caffeineAtBedtime)
+      } else {
+        // Gradual absorption - use curve calculation
+        const curve = calculateCaffeineCurve(startDateTime, endDateTime, dose, halfLife)
+        
+        // Find caffeine level at bedtime
+        const hoursSinceStart = (bedtimeDateTime - startDateTime) / (1000 * 60 * 60)
+        
+        if (hoursSinceStart < 0) {
+          return 0 // Bedtime is before consumption started
+        }
+        
+        // Find the closest data point in the curve
+        let caffeineAtBedtime = 0
+        for (let point of curve) {
+          const pointHours = (point.time - startDateTime) / (1000 * 60 * 60)
+          if (pointHours <= hoursSinceStart) {
+            caffeineAtBedtime = point.caffeine
+          } else {
+            break
+          }
+        }
+        
+        return Math.max(0, caffeineAtBedtime)
+      }
     }
     
-    const hoursElapsed = (bed - intake) / (1000 * 60 * 60)
-    const caffeineLeft = dose * Math.pow(0.5, hoursElapsed / halfLife)
+    // Fallback to original instant absorption model using startTime as intake time
+    if (startTime) {
+      const intake = new Date(`2000-01-01T${startTime}`)
+      
+      // Handle case where bedtime is next day
+      if (bed < intake) {
+        bed.setDate(bed.getDate() + 1)
+      }
+      
+      const hoursElapsed = (bed - intake) / (1000 * 60 * 60)
+      const caffeineLeft = dose * Math.pow(0.5, hoursElapsed / halfLife)
+      
+      return Math.max(0, caffeineLeft)
+    }
     
-    return Math.max(0, caffeineLeft)
+    return 0 // No valid time information
   }
 
   const calculateLatestSafeIntakeTime = (bedtime, halfLife, dose, threshold = safeSleepThreshold) => {
@@ -308,7 +511,7 @@ export default function CaffeineCalculator() {
   }
 
   const calculateIndividualCutoffTimes = (drinks, bedtime, halfLife) => {
-    const validDrinks = drinks.filter(drink => drink.dose && drink.intakeTime)
+    const validDrinks = drinks.filter(drink => drink.dose && drink.startTimeString)
     const cutoffTimes = []
     let cumulativeCaffeineAtBedtime = 0
     
@@ -316,9 +519,10 @@ export default function CaffeineCalculator() {
     validDrinks.forEach(drink => {
       const caffeineLeft = calculateCaffeineRemaining(
         parseFloat(drink.dose),
-        drink.intakeTime,
         bedtime,
-        halfLife
+        halfLife,
+        drink.startTimeString,
+        drink.endTimeString
       )
       cumulativeCaffeineAtBedtime += caffeineLeft
     })
@@ -333,9 +537,10 @@ export default function CaffeineCalculator() {
         if (otherIndex !== index) {
           const otherCaffeineLeft = calculateCaffeineRemaining(
             parseFloat(otherDrink.dose),
-            otherDrink.intakeTime,
             bedtime,
-            halfLife
+            halfLife,
+            otherDrink.startTimeString,
+            otherDrink.endTimeString
           )
           otherDrinksCaffeine += otherCaffeineLeft
         }
@@ -365,13 +570,15 @@ export default function CaffeineCalculator() {
     return cutoffTimes
   }
 
-  const generateChartData = (drinks, bedtime, halfLife) => {
+  const generateChartData = (drinks, bedtime, halfLife, chartHours) => {
     const labels = []
     const datasets = []
     
-    // Generate 24 hours of data points (every hour)
-    for (let i = 0; i < 24; i++) {
-      const timeString = `${String(i).padStart(2, '0')}:00`
+    // Generate data points (every hour)
+    for (let i = 0; i < chartHours; i++) {
+      const hour = i % 24
+      const day = Math.floor(i / 24)
+      const timeString = day === 0 ? `${String(hour).padStart(2, '0')}:00` : `${String(hour).padStart(2, '0')}:00 (+1)`
       labels.push(timeString)
     }
     
@@ -386,15 +593,72 @@ export default function CaffeineCalculator() {
     ]
     
     drinks.forEach((drink, index) => {
-      if (drink.dose && drink.intakeTime) {
-        const intake = new Date(`2000-01-01T${drink.intakeTime}`)
+      if (drink.dose && drink.startTimeString) {
         const data = []
         
-        for (let i = 0; i < 24; i++) {
-          const currentTime = new Date(intake.getTime() + i * 60 * 60 * 1000)
-          const hoursElapsed = i
-          const caffeineLevel = parseFloat(drink.dose) * Math.pow(0.5, hoursElapsed / halfLife)
-          data.push(Math.max(0, caffeineLevel))
+        // If we have startTime, determine if it's instant or gradual
+        if (drink.startTimeString) {
+          const today = new Date()
+          const startDateTime = new Date(today.toDateString() + ' ' + drink.startTimeString)
+          
+          // Check if this is instant consumption (no endTime or endTime === startTime)
+          const isInstant = !drink.endTimeString || drink.endTimeString === drink.startTimeString
+          
+          if (isInstant) {
+            // Instant consumption - use simple decay formula
+            for (let i = 0; i < chartHours; i++) {
+              const hour = i % 24
+              const day = Math.floor(i / 24)
+              const currentHour = new Date(today.toDateString() + ` ${String(hour).padStart(2, '0')}:00:00`)
+              
+              // If this is the next day, add 24 hours
+              if (day > 0) {
+                currentHour.setDate(currentHour.getDate() + day)
+              }
+              
+              // Calculate hours since consumption
+              const hoursSinceConsumption = (currentHour - startDateTime) / (1000 * 60 * 60)
+              
+              if (hoursSinceConsumption < 0) {
+                data.push(0) // Before consumption
+              } else {
+                // Instant consumption - full dose immediately, then decay
+                const caffeine = parseFloat(drink.dose) * Math.pow(0.5, hoursSinceConsumption / halfLife)
+                data.push(Math.max(0, caffeine))
+              }
+            }
+          } else {
+            // Gradual absorption - use curve calculation
+            const effectiveEndTime = drink.endTimeString
+            const endDateTime = new Date(today.toDateString() + ' ' + effectiveEndTime)
+            
+            // Calculate caffeine curve
+            const curve = calculateCaffeineCurve(startDateTime, endDateTime, parseFloat(drink.dose), halfLife)
+            
+            // Generate data points for each hour
+            for (let i = 0; i < chartHours; i++) {
+              const hour = i % 24
+              const day = Math.floor(i / 24)
+              const currentHour = new Date(today.toDateString() + ` ${String(hour).padStart(2, '0')}:00:00`)
+              
+              // If this is the next day, add 24 hours
+              if (day > 0) {
+                currentHour.setDate(currentHour.getDate() + day)
+              }
+              
+              // Find caffeine level at this hour
+              let caffeineAtHour = 0
+              for (let point of curve) {
+                if (point.time <= currentHour) {
+                  caffeineAtHour = point.caffeine
+                } else {
+                  break
+                }
+              }
+              
+              data.push(Math.max(0, caffeineAtHour))
+            }
+          }
         }
         
         datasets.push({
@@ -413,74 +677,11 @@ export default function CaffeineCalculator() {
     }
   }
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    
-    if (!bedtime) {
-      alert('Please enter your bedtime')
-      return
-    }
-    
-    if (!personalInfo.age || !personalInfo.sex || !personalInfo.weight) {
-      alert('Please fill in all personal information fields')
-      return
-    }
-    
-    const validDrinks = drinks.filter(drink => drink.dose && drink.intakeTime)
-    if (validDrinks.length === 0) {
-      alert('Please add at least one drink with dose and time')
-      return
-    }
-    
-    // Calculate adjusted half-life based on personal info
-    const halfLife = calculateAdjustedHalfLife(personalInfo, units)
-    setAdjustedHalfLife(halfLife)
-    
-    // Calculate individual cutoff times for each drink
-    const individualCutoffTimes = calculateIndividualCutoffTimes(validDrinks, bedtime, halfLife)
-    setIndividualCutoffs(individualCutoffTimes)
-    
-    // Calculate daily intake and warning messages
-    const totalDailyIntake = calculateDailyIntake(validDrinks)
-    setDailyIntake(totalDailyIntake)
-    
-    // Check for warnings
-    const dailyWarning = getWarningMessage(totalDailyIntake)
-    const typoWarning = checkForTypo(validDrinks)
-    
-    // Set warning message (prioritize typo detection over daily intake warnings)
-    if (typoWarning) {
-      setWarningMessage(typoWarning)
-    } else if (dailyWarning) {
-      setWarningMessage(dailyWarning)
-    } else {
-      setWarningMessage(null)
-    }
-    
-    // Calculate total caffeine remaining at bedtime
-    let totalCaffeineLeft = 0
-    validDrinks.forEach(drink => {
-      const caffeineLeft = calculateCaffeineRemaining(
-        parseFloat(drink.dose),
-        drink.intakeTime,
-        bedtime,
-        halfLife
-      )
-      totalCaffeineLeft += caffeineLeft
-    })
-    
-    setResult(totalCaffeineLeft)
-    setChartData(generateChartData(validDrinks, bedtime, halfLife))
-    
-    // Save today's data to localStorage
-    const today = getTodayDate()
-    saveDailyData(today, validDrinks)
-    setTodayData(loadDailyData(today))
-  }
 
   const addDrink = () => {
     const newId = generateStableId()
-    const newDrinks = [...drinks, { id: newId, name: '', dose: '', intakeTime: '' }]
+    const now = Date.now()
+    const newDrinks = [...drinks, { id: newId, name: '', dose: '', intakeTime: '', startTime: now, endTime: now, startTimeString: '', endTimeString: '', isEditing: true }]
     setDrinks(sortDrinksByTime(newDrinks))
   }
 
@@ -491,24 +692,75 @@ export default function CaffeineCalculator() {
   }
 
   const updateDrink = (id, field, value) => {
-    // Just update the drinks list without processing
+    // Only update if the drink is in editing mode
+    setDrinks(drinks.map(drink => {
+      if (drink.id === id && drink.isEditing) {
+        const updatedDrink = { ...drink, [field]: value }
+        
+        // If the drink name is "Instant", ensure startTime === endTime
+        if (field === 'name' && value === 'Instant') {
+          const now = Date.now()
+          const currentTimeString = new Date().toTimeString().slice(0, 5) // HH:MM format
+          updatedDrink.startTime = now
+          updatedDrink.endTime = now
+          updatedDrink.startTimeString = currentTimeString
+          updatedDrink.endTimeString = currentTimeString
+        }
+        
+        return updatedDrink
+      }
+      return drink
+    }))
+  }
+
+  const startEditing = (id) => {
     setDrinks(drinks.map(drink => 
-      drink.id === id ? { ...drink, [field]: value } : drink
+      drink.id === id ? { ...drink, isEditing: true } : drink
     ))
   }
 
+  const cancelEditing = (id) => {
+    setDrinks(drinks.map(drink => 
+      drink.id === id ? { ...drink, isEditing: false } : drink
+    ))
+  }
+
+
   const handleDrinkSelection = (id, selectedDrinkName) => {
-    const selectedDrink = drinksDatabase.find(drink => drink.name === selectedDrinkName)
+    // Handle "Create Custom Drink" option
+    if (selectedDrinkName === "CREATE_CUSTOM_DRINK") {
+      // Don't clear the name - let user continue typing if they already started
+      // Just ensure we're in custom drink mode
+      return
+    }
+    
+    // Check both drinksDatabase and recentDrinks for the selected drink
+    let selectedDrink = drinksDatabase.find(drink => drink.name === selectedDrinkName)
+    
+    // If not found in database, check recent drinks (custom drinks)
+    if (!selectedDrink) {
+      selectedDrink = recentDrinks.find(drink => drink.name === selectedDrinkName)
+    }
+    
     if (selectedDrink) {
       // Update recent drinks
       const updatedRecent = updateRecentDrinks(selectedDrink, recentDrinks)
       setRecentDrinks(updatedRecent)
       
+      const now = Date.now()
+      const currentTimeString = new Date().toTimeString().slice(0, 5) // HH:MM format
+      
       setDrinks(drinks.map(drink => 
         drink.id === id ? { 
           ...drink, 
           name: selectedDrink.name, 
-          dose: selectedDrink.caffeine.toString() 
+          dose: selectedDrink.caffeine.toString(),
+          // If it's Instant, startTime === endTime, otherwise use current time as default
+          startTime: selectedDrink.isInstant ? now : now,
+          endTime: selectedDrink.isInstant ? now : now,
+          startTimeString: selectedDrink.isInstant ? currentTimeString : currentTimeString,
+          endTimeString: selectedDrink.isInstant ? currentTimeString : currentTimeString,
+          isEditing: false // Exit edit mode when a drink is selected from database
         } : drink
       ))
     }
@@ -517,11 +769,37 @@ export default function CaffeineCalculator() {
   const createGroupedOptions = () => {
     const groups = []
     
-    // Recent Drinks group (only if there are recent drinks)
-    if (recentDrinks.length > 0) {
+    // Add "Create Custom Drink" option at the top
+    groups.push({
+      label: "Actions",
+      options: [{
+        value: "CREATE_CUSTOM_DRINK",
+        label: "➕ Create Custom Drink",
+        drink: { name: "CREATE_CUSTOM_DRINK", isCreateCustom: true }
+      }]
+    })
+    
+    // Separate custom drinks from other recent drinks
+    const customDrinks = recentDrinks.filter(drink => drink.isCustom)
+    const otherRecentDrinks = recentDrinks.filter(drink => !drink.isCustom)
+    
+    // Custom Drinks group (if there are any)
+    if (customDrinks.length > 0) {
+      groups.push({
+        label: "My Custom Drinks",
+        options: customDrinks.map(drink => ({
+          value: drink.name,
+          label: `${drink.name} — ${drink.caffeine}mg`,
+          drink: drink
+        }))
+      })
+    }
+    
+    // Recent Drinks group (only if there are non-custom recent drinks)
+    if (otherRecentDrinks.length > 0) {
       groups.push({
         label: "Recent Drinks",
-        options: recentDrinks.map(drink => ({
+        options: otherRecentDrinks.map(drink => ({
           value: drink.name,
           label: `${drink.name} — ${drink.caffeine}mg`,
           drink: drink
@@ -554,32 +832,57 @@ export default function CaffeineCalculator() {
   }
 
   const processDrinkUpdate = (id, field, value) => {
+    // Just update the drink in state, no automatic processing
+    setDrinks(drinks.map(drink => 
+      drink.id === id ? { ...drink, [field]: value } : drink
+    ))
+  }
+
+  const handleDrinkDone = (id) => {
     const drink = drinks.find(d => d.id === id)
-    
-    // Only process if the value actually changed
-    if (drink && drink[field] === value) {
-      return // No change, skip processing
-    }
-    
-    // Create the updated drink object
-    const updatedDrink = { ...drink, [field]: value }
-    
+    if (!drink) return
+
     // Check if all required fields are filled
-    const isComplete = updatedDrink.name && 
-                      updatedDrink.dose && 
-                      parseFloat(updatedDrink.dose) > 0 && 
-                      updatedDrink.intakeTime
-    
-    // Update the drinks list
+    const isComplete = drink.name && 
+                      drink.dose && 
+                      parseFloat(drink.dose) > 0 && 
+                      drink.startTimeString
+
+    if (!isComplete) {
+      alert('Please fill in all required fields (drink name, dose, and start time)')
+      return
+    }
+
+    // Create updated drink object
+    const updatedDrink = { ...drink }
+
+    // Check if this is a custom drink (not in database and not already a recent drink)
+    if (!drinksDatabase.find(db => db.name === drink.name.trim()) && !recentDrinks.find(r => r.name === drink.name.trim())) {
+      const customDrink = {
+        name: drink.name.trim(),
+        caffeine: parseFloat(drink.dose),
+        category: 'Custom',
+        isCustom: true
+      }
+      // Add to recent drinks for easy selection
+      const updatedRecent = updateRecentDrinks(customDrink, recentDrinks)
+      setRecentDrinks(updatedRecent)
+    }
+
+    // Process the drink - convert to logged drink if complete and not already logged
     const updatedDrinks = drinks.map(d => {
       if (d.id === id) {
-        if (isComplete && !d.isLogged) {
-          // Convert to logged drink if complete and not already logged
+        if (!d.isLogged) {
+          // Convert to logged drink
           const today = getTodayDate()
           const loggedDrink = {
             name: updatedDrink.name,
             dose: parseFloat(updatedDrink.dose),
-            time: updatedDrink.intakeTime
+            time: updatedDrink.startTimeString, // Use startTimeString as the main time
+            startTime: updatedDrink.startTime || Date.now(),
+            endTime: updatedDrink.endTime || Date.now(),
+            startTimeString: updatedDrink.startTimeString || '',
+            endTimeString: updatedDrink.endTimeString || ''
           }
           
           // Add to localStorage
@@ -592,13 +895,17 @@ export default function CaffeineCalculator() {
             isLogged: true,
             loggedIndex: updatedData.length - 1
           }
-        } else if (d.isLogged) {
+        } else {
           // Update existing logged drink in localStorage
           const today = getTodayDate()
           const loggedUpdate = {
             name: updatedDrink.name,
             dose: parseFloat(updatedDrink.dose) || 0,
-            time: updatedDrink.intakeTime
+            time: updatedDrink.startTimeString,
+            startTime: updatedDrink.startTime || Date.now(),
+            endTime: updatedDrink.endTime || Date.now(),
+            startTimeString: updatedDrink.startTimeString || '',
+            endTimeString: updatedDrink.endTimeString || ''
           }
           
           const updatedData = updateTodayDrink(today, d.loggedIndex, loggedUpdate)
@@ -606,14 +913,14 @@ export default function CaffeineCalculator() {
           
           return updatedDrink
         }
-        
-        return updatedDrink
       }
       return d
     })
     
-    // Sort drinks by time and update state
-    setDrinks(sortDrinksByTime(updatedDrinks))
+    // Sort drinks by time and update state, exit edit mode
+    setDrinks(sortDrinksByTime(updatedDrinks.map(d => 
+      d.id === id ? { ...d, isEditing: false } : d
+    )))
   }
 
   // Handler for deleting drinks in unified list
@@ -643,7 +950,7 @@ export default function CaffeineCalculator() {
         </h1>
         
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form className="space-y-6">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-900">Personal Information</h2>
@@ -757,6 +1064,30 @@ export default function CaffeineCalculator() {
                       </span>
                     </div>
                     <div className="flex space-x-2">
+                      {drink.isEditing ? (
+                        <>
+                          <button
+                            onClick={() => handleDrinkDone(drink.id)}
+                            disabled={!drink.name || !drink.dose || parseFloat(drink.dose) <= 0 || !drink.startTimeString}
+                            className="px-2 py-1 text-xs bg-green-100 hover:bg-green-200 text-green-700 rounded transition duration-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                          >
+                            Done
+                          </button>
+                          <button
+                            onClick={() => cancelEditing(drink.id)}
+                            className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition duration-200"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => startEditing(drink.id)}
+                          className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded transition duration-200"
+                        >
+                          Edit
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDeleteDrink(drink.id)}
                         className="px-2 py-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 rounded transition duration-200"
@@ -772,7 +1103,7 @@ export default function CaffeineCalculator() {
                         Select Drink (Optional)
                       </label>
                       <Select
-                        value={drink.name ? { value: drink.name, label: `${drink.name} — ${drink.dose}mg` } : null}
+                        value={drink.name && !drink.name.startsWith('Custom: ') ? { value: drink.name, label: `${drink.name} — ${drink.dose}mg` } : null}
                         onChange={(selectedOption) => {
                           if (selectedOption) {
                             handleDrinkSelection(drink.id, selectedOption.value)
@@ -784,7 +1115,8 @@ export default function CaffeineCalculator() {
                         options={createGroupedOptions()}
                         placeholder="Choose from database..."
                         isClearable
-                        isSearchable
+                        isSearchable={false}
+                        isDisabled={!drink.isEditing}
                         className="mb-3"
                         styles={{
                           control: (base) => ({
@@ -800,19 +1132,22 @@ export default function CaffeineCalculator() {
                           })
                         }}
                       />
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Or Enter Custom Drink Name
-                        </label>
-                        <input
-                          type="text"
-                          value={drink.name}
-                          onChange={(e) => updateDrink(drink.id, 'name', e.target.value)}
-                          onBlur={(e) => processDrinkUpdate(drink.id, 'name', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="e.g., Custom Coffee Blend"
-                        />
-                      </div>
+                      
+                      {/* Custom drink name input - show when editing and no drink selected from database */}
+                      {drink.isEditing && (
+                        <div className="mt-3">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Custom Drink Name
+                          </label>
+                          <input
+                            type="text"
+                            value={drink.name || ''}
+                            onChange={(e) => updateDrink(drink.id, 'name', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="e.g., My Custom Coffee Blend"
+                          />
+                        </div>
+                      )}
                     </div>
                     
                     <div>
@@ -823,26 +1158,49 @@ export default function CaffeineCalculator() {
                         type="number"
                         value={drink.dose}
                         onChange={(e) => updateDrink(drink.id, 'dose', e.target.value)}
-                        onBlur={(e) => processDrinkUpdate(drink.id, 'dose', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        disabled={!drink.isEditing}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="e.g., 200"
                         min="0"
                         step="0.1"
                       />
                     </div>
                     
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Time of Intake
+                        Start Time
                       </label>
                       <input
                         type="time"
-                        value={drink.intakeTime}
-                        onChange={(e) => updateDrink(drink.id, 'intakeTime', e.target.value)}
-                        onBlur={(e) => processDrinkUpdate(drink.id, 'intakeTime', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        value={drink.startTimeString || ''}
+                        onChange={(e) => updateDrink(drink.id, 'startTimeString', e.target.value)}
+                        disabled={!drink.isEditing}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        End Time <span className="text-gray-500 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        type="time"
+                        value={drink.endTimeString || ''}
+                        onChange={(e) => updateDrink(drink.id, 'endTimeString', e.target.value)}
+                        disabled={!drink.isEditing}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                    <p className="text-sm text-blue-700">
+                      💡 <strong>Tip:</strong> If you don't enter an end time, the drink will be treated as "instant" (consumed all at once at the start time). 
+                      Enter an end time to model gradual consumption over a period.
+                    </p>
                   </div>
                   
                 </div>
@@ -872,12 +1230,6 @@ export default function CaffeineCalculator() {
               </div>
             </div>
             
-            <button
-              type="submit"
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-200"
-            >
-              Calculate Total Caffeine Remaining
-            </button>
           </form>
         </div>
         
@@ -1037,9 +1389,12 @@ export default function CaffeineCalculator() {
         
         {chartData && (
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Caffeine Levels Over 24 Hours</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">
+              Caffeine Levels Over {chartHours > 24 ? '48 Hours' : '24 Hours'}
+            </h2>
             <p className="text-sm text-gray-600 mb-4">
               Each line represents a different drink. The chart shows how caffeine from each drink decays over time.
+              {chartHours > 24 && " The chart extends to 48 hours to show bedtimes and caffeine effects past midnight."}
             </p>
             <div className="h-96">
               <Line
@@ -1051,14 +1406,15 @@ export default function CaffeineCalculator() {
                   plugins: {
                     title: {
                       display: true,
-                      text: 'Caffeine Decay Over Time - Multiple Drinks'
+                      text: chartHours > 24 ? 'Caffeine Decay Over Time - Multiple Drinks (48 Hours)' : 'Caffeine Decay Over Time - Multiple Drinks'
                     },
                     legend: {
                       display: true,
                       position: 'top'
                     },
                     verticalLine: {
-                      bedtime: bedtime
+                      bedtime: bedtime,
+                      chartHours: chartHours
                     }
                   },
                   scales: {
@@ -1072,7 +1428,7 @@ export default function CaffeineCalculator() {
                     x: {
                       title: {
                         display: true,
-                        text: 'Time (24-hour format)'
+                        text: chartHours > 24 ? 'Time (24-hour format, +1 indicates next day)' : 'Time (24-hour format)'
                       }
                     }
                   }
