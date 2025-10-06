@@ -53,9 +53,9 @@ export const getHistoryData = (days = 7) => {
 }
 
 // Personal information storage utilities
-const PERSONAL_INFO_KEY = 'caffeine-calculator-personal-info'
-const BEDTIME_KEY = 'caffeine-calculator-bedtime'
-const RECENT_DRINKS_KEY = 'caffeine-calculator-recent-drinks'
+const PERSONAL_INFO_KEY = 'cupacity-personal-info'
+const BEDTIME_KEY = 'cupacity-bedtime'
+const RECENT_DRINKS_KEY = 'cupacity-recent-drinks'
 
 export const savePersonalInfo = (personalInfo, units) => {
   const dataToSave = {

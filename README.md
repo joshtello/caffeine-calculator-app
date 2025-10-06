@@ -1,4 +1,4 @@
-# ☕ Caffeine Calculator App
+# ☕ Cupacity
 
 <div align="center">
 
@@ -55,8 +55,8 @@ Caffeine Remaining = Initial Dose × (0.5)^(hours elapsed / half-life)
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/caffeine-calculator-app.git
-   cd caffeine-calculator-app
+   git clone https://github.com/yourusername/cupacity.git
+   cd cupacity
    ```
 
 2. **Install dependencies**

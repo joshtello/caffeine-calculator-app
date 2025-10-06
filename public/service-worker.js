@@ -1,4 +1,4 @@
-const CACHE_NAME = 'caffeine-calculator-v1';
+const CACHE_NAME = 'cupacity-v1';
 const urlsToCache = [
   '/',
   '/favicon.ico',
