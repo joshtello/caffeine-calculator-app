@@ -493,46 +493,48 @@ export default function CaffeineCalculator() {
   }
 
   const calculateLatestSafeIntakeTime = (bedtime, halfLife, dose, threshold = safeSleepThreshold) => {
+    // If dose is already at or below threshold, any time is safe
+    if (dose <= threshold) return "Any time today"
+
     // Calculate how many hours before bedtime to keep caffeine ≤ threshold
     // Using the formula: threshold = dose * (0.5)^(hours/halfLife)
     // Solving for hours: hours = halfLife * log2(dose/threshold)
-    
     const hoursBeforeBed = halfLife * Math.log2(dose / threshold)
-    
-    // Get current time for today
-    const now = new Date()
-    const today = now.toDateString()
-    
-    // Convert bedtime to Date object for today
-    const bed = new Date(`${today} ${bedtime}`)
-    
-    // If bedtime is before current time, assume it's for tomorrow
-    if (bed < now) {
+
+    // Base bedtime on today's date
+    const today = new Date()
+    const bed = new Date(`${today.toDateString()} ${bedtime}`)
+
+    // If bedtime is early morning (like 3 AM), shift it to next day
+    if (bed.getHours() < 12) {
       bed.setDate(bed.getDate() + 1)
     }
-    
-    // Calculate cutoff time
-    const cutoff = new Date(bed.getTime() - (hoursBeforeBed * 60 * 60 * 1000))
-    
-    // Check if cutoff time is in the past
-    if (cutoff < now) {
-      // If cutoff is in the past, it means the safe time is tomorrow
-      cutoff.setDate(cutoff.getDate() + 1)
-    }
-    
+
+    // Subtract required time to get cutoff
+    const cutoff = new Date(bed.getTime() - hoursBeforeBed * 60 * 60 * 1000)
+
     // Format as HH:MM AM/PM
     const hours = cutoff.getHours()
     const minutes = cutoff.getMinutes()
     const ampm = hours >= 12 ? 'PM' : 'AM'
     const displayHours = hours % 12 || 12
     const displayMinutes = minutes.toString().padStart(2, '0')
-    
-    // Determine if this is today or tomorrow
+
+    // Check if cutoff is on a different calendar day
     const cutoffDate = cutoff.toDateString()
-    const todayDate = now.toDateString()
-    const isTomorrow = cutoffDate !== todayDate
+    const todayDate = today.toDateString()
+    let dayTag = ""
     
-    return `${displayHours}:${displayMinutes} ${ampm}${isTomorrow ? ' (+1)' : ''}`
+    if (cutoffDate !== todayDate) {
+      const dayDiff = Math.floor((cutoff - today) / (1000 * 60 * 60 * 24))
+      if (dayDiff < 0) {
+        dayTag = " (prev day)"
+      } else if (dayDiff > 0) {
+        dayTag = " (+1)"
+      }
+    }
+
+    return `${displayHours}:${displayMinutes} ${ampm}${dayTag}`
   }
 
   const calculateIndividualCutoffTimes = (drinks, bedtime, halfLife) => {
