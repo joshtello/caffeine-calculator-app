@@ -74,6 +74,33 @@ export default function CaffeineCalculator() {
   const baseHalfLife = 5 // hours
   const safeSleepThreshold = 30 // mg
   
+  // Helper function to calculate total caffeine from all drinks at bedtime
+  function calculateTotalCaffeineAtBedtime(drinks, bedtime, halfLife) {
+    const bedtimeDate = new Date(`${new Date().toDateString()} ${bedtime}`);
+    if (bedtimeDate.getHours() < 12) bedtimeDate.setDate(bedtimeDate.getDate() + 1);
+
+    return drinks.reduce((total, drink) => {
+      if (!drink.dose || !drink.startTimeString) return total;
+      
+      const dose = Number(drink.dose || 0);
+      const startTime = new Date(`${new Date().toDateString()} ${drink.startTimeString}`);
+      const endTime = drink.endTimeString 
+        ? new Date(`${new Date().toDateString()} ${drink.endTimeString}`)
+        : startTime;
+      
+      // Calculate caffeine remaining from this drink at bedtime
+      const caffeineRemaining = calculateCaffeineRemaining(
+        dose,
+        bedtime,
+        halfLife,
+        drink.startTimeString,
+        drink.endTimeString
+      );
+      
+      return total + Math.max(0, caffeineRemaining);
+    }, 0);
+  }
+  
   // Calculate chart hours based on bedtime and drink times
   const chartHours = useMemo(() => {
     if (!bedtime) return 24 // Default to 24 hours if no bedtime set
@@ -268,19 +295,8 @@ export default function CaffeineCalculator() {
       setWarningMessage(null)
     }
     
-    // Calculate total caffeine remaining at bedtime
-    let totalCaffeineLeft = 0
-    validDrinks.forEach(drink => {
-      const caffeineLeft = calculateCaffeineRemaining(
-        parseFloat(drink.dose),
-        bedtime,
-        halfLife,
-        drink.startTimeString,
-        drink.endTimeString
-      )
-      totalCaffeineLeft += caffeineLeft
-    })
-    
+    // Calculate total caffeine remaining at bedtime using cumulative calculation
+    const totalCaffeineLeft = calculateTotalCaffeineAtBedtime(validDrinks, bedtime, halfLife)
     setResult(totalCaffeineLeft)
     setChartData(generateChartData(validDrinks, bedtime, halfLife, chartHours))
     
@@ -291,7 +307,7 @@ export default function CaffeineCalculator() {
   }, [drinks, bedtime, personalInfo, units, chartHours])
   
   const getCaffeineZone = (caffeineLevel) => {
-    if (caffeineLevel < 30) {
+    if (caffeineLevel < safeSleepThreshold) {
       return {
         zone: 'safe',
         emoji: '✅',
@@ -522,41 +538,17 @@ export default function CaffeineCalculator() {
   const calculateIndividualCutoffTimes = (drinks, bedtime, halfLife) => {
     const validDrinks = drinks.filter(drink => drink.dose && drink.startTimeString)
     const cutoffTimes = []
-    let cumulativeCaffeineAtBedtime = 0
     
-    // Calculate cumulative caffeine from all drinks at bedtime
-    validDrinks.forEach(drink => {
-      const caffeineLeft = calculateCaffeineRemaining(
-        parseFloat(drink.dose),
-        bedtime,
-        halfLife,
-        drink.startTimeString,
-        drink.endTimeString
-      )
-      cumulativeCaffeineAtBedtime += caffeineLeft
-    })
-    
-    // For each drink, calculate when it should be consumed to keep total ≤ 30mg
+    // For each drink, calculate when it should be consumed to keep total ≤ safeSleepThreshold mg
     validDrinks.forEach((drink, index) => {
       const drinkDose = parseFloat(drink.dose)
       
-      // Calculate caffeine from all OTHER drinks at bedtime
-      let otherDrinksCaffeine = 0
-      validDrinks.forEach((otherDrink, otherIndex) => {
-        if (otherIndex !== index) {
-          const otherCaffeineLeft = calculateCaffeineRemaining(
-            parseFloat(otherDrink.dose),
-            bedtime,
-            halfLife,
-            otherDrink.startTimeString,
-            otherDrink.endTimeString
-          )
-          otherDrinksCaffeine += otherCaffeineLeft
-        }
-      })
+      // Calculate caffeine from all OTHER drinks at bedtime using cumulative calculation
+      const otherDrinks = validDrinks.filter((_, otherIndex) => otherIndex !== index)
+      const otherDrinksCaffeine = calculateTotalCaffeineAtBedtime(otherDrinks, bedtime, halfLife)
       
-      // Calculate how much caffeine this drink can contribute to stay ≤ 30mg total
-      const maxAllowedCaffeineFromThisDrink = Math.max(0, 30 - otherDrinksCaffeine)
+      // Calculate how much caffeine this drink can contribute to stay ≤ safeSleepThreshold mg total
+      const maxAllowedCaffeineFromThisDrink = Math.max(0, safeSleepThreshold - otherDrinksCaffeine)
       
       if (maxAllowedCaffeineFromThisDrink > 0) {
         // Calculate cutoff time for this drink
@@ -567,7 +559,7 @@ export default function CaffeineCalculator() {
           cutoffTime: cutoffTime
         })
       } else {
-        // This drink would push total over 30mg, so cutoff is already passed
+        // This drink would push total over safeSleepThreshold mg, so cutoff is already passed
         cutoffTimes.push({
           name: drink.name,
           dose: drink.dose,
