@@ -647,8 +647,6 @@ export default function CaffeineCalculator() {
         data,
         borderColor: colors[i % colors.length].border,
         backgroundColor: colors[i % colors.length].background,
-        tension: 0.3,
-        pointRadius: 0,
       });
     }
 
@@ -1405,13 +1403,34 @@ export default function CaffeineCalculator() {
               Each line represents a different drink. The chart shows how caffeine from each drink decays over time.
               {chartHours > 24 && " The chart extends to 48 hours to show bedtimes and caffeine effects past midnight."}
             </p>
-            <div className="h-96">
+            <div className={`h-96 ${isDarkMode ? 'dark' : ''}`}>
               <Line
                 data={chartData}
                 plugins={[verticalLinePlugin]}
                 options={{
                   responsive: true,
                   maintainAspectRatio: false,
+                  elements: {
+                    point: {
+                      radius: 2.5,                         // small dots for minimal clutter
+                      hoverRadius: 6,                      // expand on hover
+                      backgroundColor: (ctx) =>
+                        ctx.chart.canvas.classList.contains('dark')
+                          ? 'rgba(255,255,255,0.85)'       // bright dots for dark mode
+                          : 'rgba(0,0,0,0.75)',            // dark dots for light mode
+                      borderWidth: 2,
+                      borderColor: (ctx) => ctx.dataset.borderColor,
+                      hitRadius: 8,                        // easier to hover
+                    },
+                    line: {
+                      tension: 0.35,                       // smoother curves
+                      borderWidth: 2,
+                    },
+                  },
+                  interaction: {
+                    mode: 'nearest',
+                    intersect: false,
+                  },
                   plugins: {
                     title: {
                       display: true,
@@ -1421,10 +1440,29 @@ export default function CaffeineCalculator() {
                       display: true,
                       position: 'top'
                     },
+                    tooltip: {
+                      backgroundColor: (ctx) =>
+                        ctx.chart.canvas.classList.contains('dark')
+                          ? 'rgba(30,30,30,0.95)'
+                          : 'rgba(255,255,255,0.95)',
+                      titleColor: (ctx) =>
+                        ctx.chart.canvas.classList.contains('dark') ? '#f9fafb' : '#111827',
+                      bodyColor: (ctx) =>
+                        ctx.chart.canvas.classList.contains('dark') ? '#f3f4f6' : '#1f2937',
+                      borderColor: (ctx) =>
+                        ctx.chart.canvas.classList.contains('dark') ? '#374151' : '#d1d5db',
+                      borderWidth: 1,
+                      padding: 10,
+                      displayColors: true,
+                      usePointStyle: true,
+                    },
                     verticalLine: {
                       bedtime: bedtime,
                       chartHours: chartHours
                     }
+                  },
+                  layout: {
+                    padding: 10,
                   },
                   scales: {
                     y: {
