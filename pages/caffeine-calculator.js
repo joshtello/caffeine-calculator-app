@@ -94,57 +94,43 @@ export default function CaffeineCalculator() {
     return needsExtension ? 48 : 24
   }, [drinks, bedtime])
 
-  // Helper function to calculate caffeine curve (instant or gradual)
-  const calculateCaffeineCurve = (startTime, endTime, caffeineMg, halfLifeHours = 5) => {
-    const minutesToAbsorb = Math.max(1, (new Date(endTime) - new Date(startTime)) / 60000);
-    const dataPoints = [];
-    
-    // Generate points for 24 hours from start time
-    const totalMinutes = 24 * 60;
-    
-    // Check if this is instant consumption (startTime === endTime)
-    const isInstant = minutesToAbsorb <= 1;
-    
-    if (isInstant) {
-      // Instant consumption - full dose immediately, then decay
-      for (let i = 0; i <= totalMinutes; i++) {
-        const currentTime = new Date(new Date(startTime).getTime() + i * 60000);
-        const hoursSinceConsumption = i / 60;
-        
-        // Full dose at time 0, then decay
-        const caffeine = caffeineMg * Math.pow(0.5, hoursSinceConsumption / halfLifeHours);
-        
-        dataPoints.push({
-          time: currentTime,
-          caffeine: Math.max(0, caffeine)
-        });
-      }
-    } else {
-      // Gradual absorption over time
-      const absorptionRate = caffeineMg / minutesToAbsorb;
-      
-      for (let i = 0; i <= totalMinutes; i++) {
-        const currentTime = new Date(new Date(startTime).getTime() + i * 60000);
-        
-        let caffeine = 0;
-        
-        if (i <= minutesToAbsorb) {
-          // During absorption period - show gradual increase
-          const absorbed = absorptionRate * i; // caffeine absorbed so far
-          caffeine = absorbed; // No decay during absorption
+  const calculateCaffeineCurve = (startTime, endTime, caffeineMg, halfLifeHours = 5, totalHours = 48) => {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const durationHours = Math.max((end - start) / (1000 * 60 * 60), 0);
+    const isInstant = durationHours < 0.016; // <1 min = instant
+    const stepMinutes = 10;
+    const step = stepMinutes / 60; // hours
+    const intakeRate = isInstant ? 0 : caffeineMg / durationHours;
+
+    let caffeine = 0;
+    const points = [];
+
+    for (let t = 0; t <= totalHours; t += step) {
+      const currentTime = new Date(start.getTime() + t * 60 * 60 * 1000);
+
+      if (isInstant) {
+        if (t === 0) {
+          // At the exact moment of consumption, full dose
+          caffeine = caffeineMg;
+        } else if (t <= 0.01) {
+          // Very close to consumption time, still full dose
+          caffeine = caffeineMg;
         } else {
-          // After absorption period - full dose is absorbed, now decay
-          const hoursSinceEndOfAbsorption = (i - minutesToAbsorb) / 60;
-          caffeine = caffeineMg * Math.pow(0.5, hoursSinceEndOfAbsorption / halfLifeHours);
+          // After consumption, decay from full dose using absolute time
+          caffeine = caffeineMg * Math.pow(0.5, t / halfLifeHours);
         }
-        
-        dataPoints.push({
-          time: currentTime,
-          caffeine: Math.max(0, caffeine)
-        });
+      } else {
+        // Gradual intake over duration
+        const consuming = t < durationHours;
+        caffeine *= Math.pow(0.5, step / halfLifeHours); // apply decay
+        if (consuming) caffeine += intakeRate * step; // then add intake
       }
+
+      points.push({ time: currentTime, caffeine: Math.max(0, caffeine) });
     }
-    return dataPoints;
+
+    return points;
   };
   
   // Helper function to sort drinks by start time
@@ -513,11 +499,26 @@ export default function CaffeineCalculator() {
     
     const hoursBeforeBed = halfLife * Math.log2(dose / threshold)
     
-    // Convert bedtime to Date object
-    const bed = new Date(`2000-01-01T${bedtime}`)
+    // Get current time for today
+    const now = new Date()
+    const today = now.toDateString()
+    
+    // Convert bedtime to Date object for today
+    const bed = new Date(`${today} ${bedtime}`)
+    
+    // If bedtime is before current time, assume it's for tomorrow
+    if (bed < now) {
+      bed.setDate(bed.getDate() + 1)
+    }
     
     // Calculate cutoff time
     const cutoff = new Date(bed.getTime() - (hoursBeforeBed * 60 * 60 * 1000))
+    
+    // Check if cutoff time is in the past
+    if (cutoff < now) {
+      // If cutoff is in the past, it means the safe time is tomorrow
+      cutoff.setDate(cutoff.getDate() + 1)
+    }
     
     // Format as HH:MM AM/PM
     const hours = cutoff.getHours()
@@ -526,7 +527,12 @@ export default function CaffeineCalculator() {
     const displayHours = hours % 12 || 12
     const displayMinutes = minutes.toString().padStart(2, '0')
     
-    return `${displayHours}:${displayMinutes} ${ampm}`
+    // Determine if this is today or tomorrow
+    const cutoffDate = cutoff.toDateString()
+    const todayDate = now.toDateString()
+    const isTomorrow = cutoffDate !== todayDate
+    
+    return `${displayHours}:${displayMinutes} ${ampm}${isTomorrow ? ' (+1)' : ''}`
   }
 
   const calculateIndividualCutoffTimes = (drinks, bedtime, halfLife) => {
@@ -590,111 +596,64 @@ export default function CaffeineCalculator() {
   }
 
   const generateChartData = (drinks, bedtime, halfLife, chartHours) => {
-    const labels = []
-    const datasets = []
-    
-    // Generate data points (every hour)
-    for (let i = 0; i < chartHours; i++) {
-      const hour = i % 24
-      const day = Math.floor(i / 24)
-      const timeString = day === 0 ? `${String(hour).padStart(2, '0')}:00` : `${String(hour).padStart(2, '0')}:00 (+1)`
-      labels.push(timeString)
+    const today = new Date();
+    const labels = [];
+    const datasets = [];
+
+    // Build x-axis labels
+    for (let i = 0; i <= chartHours; i++) {
+      const hour = i % 24;
+      const day = Math.floor(i / 24);
+      labels.push(`${String(hour).padStart(2,'0')}:00${day ? ' (+1)' : ''}`);
     }
-    
-    // Colors for different drinks
+
     const colors = [
-      { border: 'rgb(75, 192, 192)', background: 'rgba(75, 192, 192, 0.2)' },
-      { border: 'rgb(255, 99, 132)', background: 'rgba(255, 99, 132, 0.2)' },
-      { border: 'rgb(54, 162, 235)', background: 'rgba(54, 162, 235, 0.2)' },
-      { border: 'rgb(255, 205, 86)', background: 'rgba(255, 205, 86, 0.2)' },
-      { border: 'rgb(153, 102, 255)', background: 'rgba(153, 102, 255, 0.2)' },
-      { border: 'rgb(255, 159, 64)', background: 'rgba(255, 159, 64, 0.2)' },
-    ]
-    
-    drinks.forEach((drink, index) => {
-      if (drink.dose && drink.startTimeString) {
-        const data = []
-        
-        // If we have startTime, determine if it's instant or gradual
-        if (drink.startTimeString) {
-          const today = new Date()
-          const startDateTime = new Date(today.toDateString() + ' ' + drink.startTimeString)
-          
-          // Check if this is instant consumption (no endTime or endTime === startTime)
-          const isInstant = !drink.endTimeString || drink.endTimeString === drink.startTimeString
-          
-          if (isInstant) {
-            // Instant consumption - use simple decay formula
-            for (let i = 0; i < chartHours; i++) {
-              const hour = i % 24
-              const day = Math.floor(i / 24)
-              const currentHour = new Date(today.toDateString() + ` ${String(hour).padStart(2, '0')}:00:00`)
-              
-              // If this is the next day, add 24 hours
-              if (day > 0) {
-                currentHour.setDate(currentHour.getDate() + day)
-              }
-              
-              // Calculate hours since consumption
-              const hoursSinceConsumption = (currentHour - startDateTime) / (1000 * 60 * 60)
-              
-              if (hoursSinceConsumption < 0) {
-                data.push(0) // Before consumption
-              } else {
-                // Instant consumption - full dose immediately, then decay
-                const caffeine = parseFloat(drink.dose) * Math.pow(0.5, hoursSinceConsumption / halfLife)
-                data.push(Math.max(0, caffeine))
-              }
-            }
-          } else {
-            // Gradual absorption - use curve calculation
-            const effectiveEndTime = drink.endTimeString
-            const endDateTime = new Date(today.toDateString() + ' ' + effectiveEndTime)
-            
-            // Calculate caffeine curve
-            const curve = calculateCaffeineCurve(startDateTime, endDateTime, parseFloat(drink.dose), halfLife)
-            
-            // Generate data points for each hour
-            for (let i = 0; i < chartHours; i++) {
-              const hour = i % 24
-              const day = Math.floor(i / 24)
-              const currentHour = new Date(today.toDateString() + ` ${String(hour).padStart(2, '0')}:00:00`)
-              
-              // If this is the next day, add 24 hours
-              if (day > 0) {
-                currentHour.setDate(currentHour.getDate() + day)
-              }
-              
-              // Find caffeine level at this hour
-              let caffeineAtHour = 0
-              for (let point of curve) {
-                if (point.time <= currentHour) {
-                  caffeineAtHour = point.caffeine
-                } else {
-                  break
-                }
-              }
-              
-              data.push(Math.max(0, caffeineAtHour))
-            }
-          }
+      { border: 'rgb(75,192,192)', background: 'rgba(75,192,192,0.2)' },
+      { border: 'rgb(255,99,132)', background: 'rgba(255,99,132,0.2)' },
+      { border: 'rgb(255,205,86)', background: 'rgba(255,205,86,0.2)' },
+      { border: 'rgb(153,102,255)', background: 'rgba(153,102,255,0.2)' },
+      { border: 'rgb(54,162,235)', background: 'rgba(54,162,235,0.2)' },
+    ];
+
+    for (let i = 0; i < drinks.length; i++) {
+      const drink = drinks[i];
+      if (!drink.dose || !drink.startTimeString) continue;
+
+      const start = new Date(`${today.toDateString()} ${drink.startTimeString}`);
+      const end = drink.endTimeString
+        ? new Date(`${today.toDateString()} ${drink.endTimeString}`)
+        : start;
+
+      if (end < start) end.setDate(end.getDate() + 1);
+
+      const startOffsetHours =
+        (start.getHours() + start.getMinutes() / 60);
+
+      const curve = calculateCaffeineCurve(start, end, parseFloat(drink.dose), halfLife, chartHours);
+      const data = Array(chartHours + 1).fill(0);
+
+      for (let j = 0; j < curve.length; j++) {
+        const point = curve[j];
+        const relHour = (point.time - start) / (1000 * 60 * 60);
+        const globalIndex = Math.round(startOffsetHours + relHour);
+        if (globalIndex >= 0 && globalIndex < data.length) {
+          // Keep the maximum value when multiple curve points map to the same hour
+          data[globalIndex] = Math.max(data[globalIndex], point.caffeine);
         }
-        
-        datasets.push({
-          label: `${drink.name} (${drink.dose}mg)`,
-          data,
-          borderColor: colors[index % colors.length].border,
-          backgroundColor: colors[index % colors.length].background,
-          tension: 0.1,
-        })
       }
-    })
-    
-    return {
-      labels,
-      datasets,
+
+      datasets.push({
+        label: `${drink.name} (${drink.dose}mg)`,
+        data,
+        borderColor: colors[i % colors.length].border,
+        backgroundColor: colors[i % colors.length].background,
+        tension: 0.3,
+        pointRadius: 0,
+      });
     }
-  }
+
+    return { labels, datasets };
+  };
 
 
   const addDrink = () => {
@@ -1220,11 +1179,11 @@ export default function CaffeineCalculator() {
                     isDarkMode ? 'text-gray-300' : 'text-gray-700'
                   }`}>
                             Custom Drink Name
-                        </label>
-                        <input
-                          type="text"
+                      </label>
+                      <input
+                        type="text"
                             value={drink.name || ''}
-                          onChange={(e) => updateDrink(drink.id, 'name', e.target.value)}
+                        onChange={(e) => updateDrink(drink.id, 'name', e.target.value)}
                             className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                       isDarkMode 
                         ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
@@ -1351,88 +1310,6 @@ export default function CaffeineCalculator() {
             </div>
             
           </form>
-        </div>
-        
-        {/* History Section */}
-        <div className={`rounded-lg shadow-md p-4 sm:p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 space-y-2 sm:space-y-0">
-            <h2 className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Caffeine History</h2>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className={`px-3 py-2 text-sm rounded-md transition duration-200 self-start sm:self-auto ${
-              isDarkMode 
-                ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-            }`}
-            >
-              {showHistory ? 'Hide' : 'Show'} Past 7 Days
-            </button>
-          </div>
-          
-          {showHistory && (
-            <div className="space-y-3">
-              {historyData.map((day, index) => (
-                <Link 
-                  key={day.date}
-                  href={`/history/${day.date}`}
-                  className="block"
-                >
-                  <div 
-                    className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 cursor-pointer hover:shadow-md ${
-                      day.isToday 
-                        ? `border-blue-200 hover:border-blue-300 ${isDarkMode ? 'bg-blue-900 hover:bg-blue-800' : 'bg-blue-50 hover:bg-blue-100'}` 
-                        : `border-gray-200 hover:border-gray-300 ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`
-                    }`}
-                  >
-                    <div className="flex justify-between items-center mb-2">
-                      <div className="flex items-center space-x-2 min-w-0 flex-1">
-                        <span className={`font-medium text-sm sm:text-base ${day.isToday ? 'text-blue-800' : 'text-gray-800'} truncate`}>
-                          {day.dateDisplay}
-                          {day.isToday && <span className="ml-1 text-xs text-blue-600">(Today)</span>}
-                        </span>
-                        {day.total >= 400 && (
-                          <span className="text-orange-600 text-sm flex-shrink-0">⚠️</span>
-                        )}
-                      </div>
-                      <span className={`font-bold text-sm sm:text-base flex-shrink-0 ${day.total >= 400 ? 'text-orange-600' : 'text-gray-600'}`}>
-                        {day.total} mg
-                      </span>
-                    </div>
-                    
-                    {day.drinks.length > 0 && (
-                      <div className="text-xs sm:text-sm text-gray-600 space-y-1">
-                        {day.drinks.slice(0, 3).map((drink, drinkIndex) => (
-                          <div key={drinkIndex} className="flex flex-col sm:flex-row sm:justify-between space-y-1 sm:space-y-0">
-                            <span className="font-medium">{drink.name} - {drink.dose} mg</span>
-                            <span className="text-gray-500">{
-                              new Date(`2000-01-01T${drink.time}`).toLocaleTimeString([], {
-                                hour: 'numeric',
-                                minute: '2-digit',
-                                hour12: true
-                              })
-                            }</span>
-                          </div>
-                        ))}
-                        {day.drinks.length > 3 && (
-                          <div className="text-xs text-gray-500 italic">
-                            ... and {day.drinks.length - 3} more drinks
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {day.drinks.length === 0 && !day.isToday && (
-                      <div className="text-xs text-gray-500 italic">No caffeine logged</div>
-                    )}
-                    
-                    <div className="mt-2 text-xs text-gray-500">
-                      Click to view details →
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
         </div>
         
         {result !== null && (
@@ -1569,6 +1446,88 @@ export default function CaffeineCalculator() {
             </div>
           </div>
         )}
+        
+        {/* History Section */}
+        <div className={`rounded-lg shadow-md p-4 sm:p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 space-y-2 sm:space-y-0">
+            <h2 className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Caffeine History</h2>
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className={`px-3 py-2 text-sm rounded-md transition duration-200 self-start sm:self-auto ${
+              isDarkMode 
+                ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+            }`}
+            >
+              {showHistory ? 'Hide' : 'Show'} Past 7 Days
+            </button>
+          </div>
+          
+          {showHistory && (
+            <div className="space-y-3">
+              {historyData.map((day, index) => (
+                <Link 
+                  key={day.date}
+                  href={`/history/${day.date}`}
+                  className="block"
+                >
+                  <div 
+                    className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 cursor-pointer hover:shadow-md ${
+                      day.isToday 
+                        ? `border-blue-200 hover:border-blue-300 ${isDarkMode ? 'bg-blue-900 hover:bg-blue-800' : 'bg-blue-50 hover:bg-blue-100'}` 
+                        : `border-gray-200 hover:border-gray-300 ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`
+                    }`}
+                  >
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="flex items-center space-x-2 min-w-0 flex-1">
+                        <span className={`font-medium text-sm sm:text-base ${day.isToday ? 'text-blue-800' : 'text-gray-800'} truncate`}>
+                          {day.dateDisplay}
+                          {day.isToday && <span className="ml-1 text-xs text-blue-600">(Today)</span>}
+                        </span>
+                        {day.total >= 400 && (
+                          <span className="text-orange-600 text-sm flex-shrink-0">⚠️</span>
+                        )}
+                      </div>
+                      <span className={`font-bold text-sm sm:text-base flex-shrink-0 ${day.total >= 400 ? 'text-orange-600' : 'text-gray-600'}`}>
+                        {day.total} mg
+                      </span>
+                    </div>
+                    
+                    {day.drinks.length > 0 && (
+                      <div className="text-xs sm:text-sm text-gray-600 space-y-1">
+                        {day.drinks.slice(0, 3).map((drink, drinkIndex) => (
+                          <div key={drinkIndex} className="flex flex-col sm:flex-row sm:justify-between space-y-1 sm:space-y-0">
+                            <span className="font-medium">{drink.name} - {drink.dose} mg</span>
+                            <span className="text-gray-500">{
+                              new Date(`2000-01-01T${drink.time}`).toLocaleTimeString([], {
+                                hour: 'numeric',
+                                minute: '2-digit',
+                                hour12: true
+                              })
+                            }</span>
+                          </div>
+                        ))}
+                        {day.drinks.length > 3 && (
+                          <div className="text-xs text-gray-500 italic">
+                            ... and {day.drinks.length - 3} more drinks
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {day.drinks.length === 0 && !day.isToday && (
+                      <div className="text-xs text-gray-500 italic">No caffeine logged</div>
+                    )}
+                    
+                    <div className="mt-2 text-xs text-gray-500">
+                      Click to view details →
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
         
         {/* Disclaimer Footer */}
         <div className="mt-12 pt-6 border-t border-gray-200">
