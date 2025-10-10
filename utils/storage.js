@@ -56,6 +56,7 @@ export const getHistoryData = (days = 7) => {
 const PERSONAL_INFO_KEY = 'cupacity-personal-info'
 const BEDTIME_KEY = 'cupacity-bedtime'
 const RECENT_DRINKS_KEY = 'cupacity-recent-drinks'
+const CUSTOM_DRINKS_KEY = 'cupacity-custom-drinks'
 
 export const savePersonalInfo = (personalInfo, units) => {
   const dataToSave = {
@@ -145,5 +146,55 @@ export const addQuickDrink = (date, drink) => {
 // Stable ID generator
 export const generateStableId = () => {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9)
+}
+
+// Custom drinks storage utilities
+export const saveCustomDrinks = (customDrinks) => {
+  localStorage.setItem(CUSTOM_DRINKS_KEY, JSON.stringify(customDrinks))
+}
+
+export const loadCustomDrinks = () => {
+  const stored = localStorage.getItem(CUSTOM_DRINKS_KEY)
+  return stored ? JSON.parse(stored) : []
+}
+
+export const addCustomDrink = (customDrink) => {
+  const customDrinks = loadCustomDrinks()
+  const newDrink = {
+    id: generateStableId(),
+    name: customDrink.name,
+    caffeine: parseFloat(customDrink.caffeine),
+    category: customDrink.category || 'Custom',
+    colorTag: customDrink.colorTag || null,
+    isCustom: true,
+    createdAt: new Date().toISOString()
+  }
+  customDrinks.push(newDrink)
+  saveCustomDrinks(customDrinks)
+  return newDrink
+}
+
+export const updateCustomDrink = (drinkId, updatedDrink) => {
+  const customDrinks = loadCustomDrinks()
+  const index = customDrinks.findIndex(drink => drink.id === drinkId)
+  if (index !== -1) {
+    customDrinks[index] = {
+      ...customDrinks[index],
+      name: updatedDrink.name,
+      caffeine: parseFloat(updatedDrink.caffeine),
+      category: updatedDrink.category || 'Custom',
+      colorTag: updatedDrink.colorTag || null
+    }
+    saveCustomDrinks(customDrinks)
+    return customDrinks[index]
+  }
+  return null
+}
+
+export const deleteCustomDrink = (drinkId) => {
+  const customDrinks = loadCustomDrinks()
+  const filtered = customDrinks.filter(drink => drink.id !== drinkId)
+  saveCustomDrinks(filtered)
+  return filtered
 }
 

@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Line } from 'react-chartjs-2'
 import Select from 'react-select'
-import Link from 'next/link'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -28,7 +27,11 @@ import {
   updateTodayDrink,
   deleteTodayDrink,
   addQuickDrink,
-  generateStableId
+  generateStableId,
+  loadCustomDrinks,
+  addCustomDrink,
+  updateCustomDrink,
+  deleteCustomDrink
 } from '../utils/storage'
 import { verticalLinePlugin } from '../utils/plugins'
 
@@ -51,6 +54,8 @@ export default function CaffeineCalculator() {
   ])
   const [drinksDatabase, setDrinksDatabase] = useState([])
   const [recentDrinks, setRecentDrinks] = useState([])
+  const [customDrinks, setCustomDrinks] = useState([])
+  const [selectedDate, setSelectedDate] = useState(getTodayDate())
   const [bedtime, setBedtime] = useState('')
   const [personalInfo, setPersonalInfo] = useState({
     age: '',
@@ -68,8 +73,25 @@ export default function CaffeineCalculator() {
   const [warningMessage, setWarningMessage] = useState(null)
   const [todayData, setTodayData] = useState([])
   const [historyData, setHistoryData] = useState([])
-  const [showHistory, setShowHistory] = useState(false)
+  const [show7DaySummary, setShow7DaySummary] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState(false)
+  const [isTransitioning, setIsTransitioning] = useState(false)
+  
+  // Auto-save state tracking
+  const [saveStatus, setSaveStatus] = useState('upToDate') // 'upToDate', 'saving', 'saved'
+  const [lastSaveTime, setLastSaveTime] = useState(null)
+  const [saveTimeout, setSaveTimeout] = useState(null)
+  const [isActivelyEditing, setIsActivelyEditing] = useState(false)
+  
+  // Modal state
+  const [showCustomDrinkModal, setShowCustomDrinkModal] = useState(false)
+  const [editingCustomDrink, setEditingCustomDrink] = useState(null)
+  const [customDrinkForm, setCustomDrinkForm] = useState({
+    name: '',
+    caffeine: '',
+    category: 'Custom',
+    colorTag: null
+  })
 
   const baseHalfLife = 5 // hours
   const safeSleepThreshold = 30 // mg
@@ -81,14 +103,7 @@ export default function CaffeineCalculator() {
 
     return drinks.reduce((total, drink) => {
       if (!drink.dose || !drink.startTimeString) return total;
-      
       const dose = Number(drink.dose || 0);
-      const startTime = new Date(`${new Date().toDateString()} ${drink.startTimeString}`);
-      const endTime = drink.endTimeString 
-        ? new Date(`${new Date().toDateString()} ${drink.endTimeString}`)
-        : startTime;
-      
-      // Calculate caffeine remaining from this drink at bedtime
       const caffeineRemaining = calculateCaffeineRemaining(
         dose,
         bedtime,
@@ -96,7 +111,6 @@ export default function CaffeineCalculator() {
         drink.startTimeString,
         drink.endTimeString
       );
-      
       return total + Math.max(0, caffeineRemaining);
     }, 0);
   }
@@ -137,21 +151,15 @@ export default function CaffeineCalculator() {
       const currentTime = new Date(start.getTime() + t * 60 * 60 * 1000);
 
       if (isInstant) {
-        if (t === 0) {
-          // At the exact moment of consumption, full dose
-          caffeine = caffeineMg;
-        } else if (t <= 0.01) {
-          // Very close to consumption time, still full dose
+        if (t === 0 || t <= 0.01) {
           caffeine = caffeineMg;
         } else {
-          // After consumption, decay from full dose using absolute time
           caffeine = caffeineMg * Math.pow(0.5, t / halfLifeHours);
         }
       } else {
-        // Gradual intake over duration
         const consuming = t < durationHours;
-        caffeine *= Math.pow(0.5, step / halfLifeHours); // apply decay
-        if (consuming) caffeine += intakeRate * step; // then add intake
+        caffeine *= Math.pow(0.5, step / halfLifeHours); // decay
+        if (consuming) caffeine += intakeRate * step; // add intake
       }
 
       points.push({ time: currentTime, caffeine: Math.max(0, caffeine) });
@@ -173,39 +181,18 @@ export default function CaffeineCalculator() {
     })
   }
   
-  // Load today's data and personal info on component mount
+  // Load drinks database on component mount
   useEffect(() => {
-    // Load drinks database
+    // Load drinks database and filter out Special category and Instant drink
     fetch('/data/drinks.json')
       .then(response => response.json())
-      .then(data => setDrinksDatabase(data))
+      .then(data => {
+        const filteredDrinks = data.filter(
+          drink => drink.category !== 'Special' && drink.name !== 'Instant'
+        )
+        setDrinksDatabase(filteredDrinks)
+      })
       .catch(error => console.error('Error loading drinks database:', error))
-
-    const today = getTodayDate()
-    const todaysData = loadDailyData(today)
-    setTodayData(todaysData)
-    setHistoryData(getHistoryData())
-    
-    // Convert today's logged drinks to the drinks format and merge with existing drinks
-    const loggedDrinks = todaysData.map((drink, index) => ({
-      id: `logged-${index}`,
-      name: drink.name,
-      dose: drink.dose.toString(),
-      intakeTime: drink.time,
-      startTime: drink.startTime || Date.now(),
-      endTime: drink.endTime || Date.now(),
-      startTimeString: drink.startTimeString || '',
-      endTimeString: drink.endTimeString || '',
-      isLogged: true,
-      loggedIndex: index
-    }))
-    
-    // Keep any existing calculation-only drinks and add logged drinks
-    setDrinks(prev => {
-      const calculationDrinks = prev.filter(d => !d.isLogged)
-      const allDrinks = [...loggedDrinks, ...calculationDrinks]
-      return sortDrinksByTime(allDrinks)
-    })
     
     // Load saved personal information
     const savedData = loadPersonalInfo()
@@ -219,27 +206,123 @@ export default function CaffeineCalculator() {
     // Load recent drinks
     const savedRecentDrinks = loadRecentDrinks()
     setRecentDrinks(savedRecentDrinks)
+    
+    // Load custom drinks
+    const savedCustomDrinks = loadCustomDrinks()
+    setCustomDrinks(savedCustomDrinks)
   }, [])
+  
+  // Load data for selected date whenever it changes
+  useEffect(() => {
+    setIsTransitioning(true)
+    
+    const selectedDateData = loadDailyData(selectedDate)
+    setTodayData(selectedDateData)
+    setHistoryData(getHistoryData())
+    
+    // Convert selected date's logged drinks to the drinks format
+    const loggedDrinks = selectedDateData.map((drink, index) => ({
+      id: `logged-${index}`,
+      name: drink.name,
+      dose: drink.dose.toString(),
+      intakeTime: drink.time,
+      startTime: drink.startTime || Date.now(),
+      endTime: drink.endTime || Date.now(),
+      startTimeString: drink.startTimeString || '',
+      endTimeString: drink.endTimeString || '',
+      isLogged: true,
+      loggedIndex: index
+    }))
+    
+    // If there are no logged drinks, show one empty drink in edit mode
+    if (loggedDrinks.length === 0) {
+      setDrinks([{ 
+        id: generateStableId(), 
+        name: '', 
+        dose: '', 
+        intakeTime: '', 
+        startTime: Date.now(), 
+        endTime: Date.now(), 
+        startTimeString: '', 
+        endTimeString: '', 
+        isEditing: true 
+      }])
+    } else {
+      setDrinks(sortDrinksByTime(loggedDrinks))
+    }
+    
+    // Fade in animation
+    setTimeout(() => setIsTransitioning(false), 300)
+    
+    // Reset save status when switching dates
+    setSaveStatus('upToDate')
+    setLastSaveTime(null)
+  }, [selectedDate])
   
   // Update history when drinks change
   useEffect(() => {
     setHistoryData(getHistoryData())
   }, [todayData])
   
-  // Auto-save personal information when it changes
+  // Debounced auto-save system (only for personal info and bedtime, not drinks while editing)
   useEffect(() => {
-    // Only save if we have some personal info (avoid saving empty initial state)
-    if (personalInfo.age || personalInfo.sex || personalInfo.weight) {
-      savePersonalInfo(personalInfo, units)
+    // Skip if we're transitioning between dates
+    if (isTransitioning) return
+    
+    // Skip if actively editing a drink
+    if (isActivelyEditing) return
+    
+    // Skip if no data to save yet
+    if (!personalInfo.age && !personalInfo.sex && !personalInfo.weight && drinks.every(d => !d.name && !d.dose)) {
+      return
     }
-  }, [personalInfo, units])
-  
-  // Auto-save bedtime when it changes
-  useEffect(() => {
-    if (bedtime) {
-      saveBedtime(bedtime)
+    
+    // Clear any existing timeout
+    if (saveTimeout) {
+      clearTimeout(saveTimeout)
     }
-  }, [bedtime])
+    
+    // Set status to saving
+    setSaveStatus('saving')
+    
+    // Debounce the actual save operation (800ms)
+    const timeout = setTimeout(() => {
+      // Save personal info
+      if (personalInfo.age || personalInfo.sex || personalInfo.weight) {
+        savePersonalInfo(personalInfo, units)
+      }
+      
+      // Save bedtime
+      if (bedtime) {
+        saveBedtime(bedtime)
+      }
+      
+      // Save drinks for selected date (only if not actively editing)
+      if (!isActivelyEditing) {
+        const validDrinks = drinks.filter(drink => drink.dose && drink.startTimeString)
+        saveDailyData(selectedDate, validDrinks)
+        setTodayData(loadDailyData(selectedDate))
+      }
+      
+      // Update save status
+      setLastSaveTime(new Date())
+      setSaveStatus('saved')
+      
+      // After 2 seconds, change to "Up to date"
+      setTimeout(() => {
+        setSaveStatus('upToDate')
+      }, 2000)
+    }, 800)
+    
+    setSaveTimeout(timeout)
+    
+    // Cleanup function
+    return () => {
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+    }
+  }, [personalInfo, units, bedtime, drinks, selectedDate, isTransitioning, isActivelyEditing])
 
   // Load dark mode preference from localStorage
   useEffect(() => {
@@ -259,7 +342,7 @@ export default function CaffeineCalculator() {
     setIsDarkMode(!isDarkMode)
   }
 
-  // Auto-calculate results when data changes
+  // Auto-calculate results when data changes (but don't auto-save)
   useEffect(() => {
     if (!bedtime || !personalInfo.age || !personalInfo.sex || !personalInfo.weight) {
       return // Don't calculate if required info is missing
@@ -299,12 +382,7 @@ export default function CaffeineCalculator() {
     const totalCaffeineLeft = calculateTotalCaffeineAtBedtime(validDrinks, bedtime, halfLife)
     setResult(totalCaffeineLeft)
     setChartData(generateChartData(validDrinks, bedtime, halfLife, chartHours))
-    
-    // Save today's data to localStorage
-    const today = getTodayDate()
-    saveDailyData(today, validDrinks)
-    setTodayData(loadDailyData(today))
-  }, [drinks, bedtime, personalInfo, units, chartHours])
+  }, [drinks, bedtime, personalInfo, units, chartHours, selectedDate])
   
   const getCaffeineZone = (caffeineLevel) => {
     if (caffeineLevel < safeSleepThreshold) {
@@ -426,86 +504,36 @@ export default function CaffeineCalculator() {
   }
 
   const calculateCaffeineRemaining = (dose, bedtime, halfLife, startTime = null, endTime = null) => {
-    const bed = new Date(`2000-01-01T${bedtime}`)
-    
-    // If we have startTime, use it (with or without endTime)
+    const today = new Date();
+    const bed = new Date(`${today.toDateString()} ${bedtime}`);
+    if (bed.getHours() < 12) bed.setDate(bed.getDate() + 1); // next-day bedtime
+
     if (startTime) {
-      // If no endTime provided, treat as instant (startTime === endTime)
-      const effectiveEndTime = endTime || startTime
-      // Convert time strings to Date objects for today
-      const today = new Date()
-      const startDateTime = new Date(today.toDateString() + ' ' + startTime)
-      const endDateTime = new Date(today.toDateString() + ' ' + effectiveEndTime)
-      const bedtimeDateTime = new Date(today.toDateString() + ' ' + bedtime)
-      
-      // Handle case where bedtime is next day
-      if (bedtimeDateTime < startDateTime) {
-        bedtimeDateTime.setDate(bedtimeDateTime.getDate() + 1)
-      }
-      
-      // Check if this is instant consumption
-      const minutesToAbsorb = Math.max(1, (endDateTime - startDateTime) / 60000)
-      const isInstant = minutesToAbsorb <= 1
-      
+      const startDateTime = new Date(`${today.toDateString()} ${startTime}`);
+      const endDateTime = new Date(`${today.toDateString()} ${endTime || startTime}`);
+      if (endDateTime < startDateTime) endDateTime.setDate(endDateTime.getDate() + 1);
+
+      const minutesToAbsorb = Math.max(1, (endDateTime - startDateTime) / 60000);
+      const isInstant = minutesToAbsorb <= 1;
+
       if (isInstant) {
-        // Instant consumption - use simple decay formula
-        const bedtimeDateTime = new Date(today.toDateString() + ' ' + bedtime)
-        
-        // Handle case where bedtime is next day
-        if (bedtimeDateTime < startDateTime) {
-          bedtimeDateTime.setDate(bedtimeDateTime.getDate() + 1)
-        }
-        
-        const hoursSinceConsumption = (bedtimeDateTime - startDateTime) / (1000 * 60 * 60)
-        
-        if (hoursSinceConsumption < 0) {
-          return 0 // Bedtime is before consumption
-        }
-        
-        const caffeineAtBedtime = dose * Math.pow(0.5, hoursSinceConsumption / halfLife)
-        return Math.max(0, caffeineAtBedtime)
+        const hoursSince = (bed - startDateTime) / (1000 * 60 * 60);
+        if (hoursSince < 0) return 0;
+        return Math.max(0, dose * Math.pow(0.5, hoursSince / halfLife));
       } else {
-        // Gradual absorption - use curve calculation
-        const curve = calculateCaffeineCurve(startDateTime, endDateTime, dose, halfLife)
-        
-        // Find caffeine level at bedtime
-        const hoursSinceStart = (bedtimeDateTime - startDateTime) / (1000 * 60 * 60)
-        
-        if (hoursSinceStart < 0) {
-          return 0 // Bedtime is before consumption started
+        const curve = calculateCaffeineCurve(startDateTime, endDateTime, dose, halfLife);
+        const hoursSinceStart = (bed - startDateTime) / (1000 * 60 * 60);
+        if (hoursSinceStart < 0) return 0;
+        let caffeineAtBed = 0;
+        for (let p of curve) {
+          const hours = (p.time - startDateTime) / (1000 * 60 * 60);
+          if (hours <= hoursSinceStart) caffeineAtBed = p.caffeine;
+          else break;
         }
-        
-        // Find the closest data point in the curve
-        let caffeineAtBedtime = 0
-        for (let point of curve) {
-          const pointHours = (point.time - startDateTime) / (1000 * 60 * 60)
-          if (pointHours <= hoursSinceStart) {
-            caffeineAtBedtime = point.caffeine
-          } else {
-            break
-          }
-        }
-        
-        return Math.max(0, caffeineAtBedtime)
+        return Math.max(0, caffeineAtBed);
       }
     }
-    
-    // Fallback to original instant absorption model using startTime as intake time
-    if (startTime) {
-      const intake = new Date(`2000-01-01T${startTime}`)
-    
-    // Handle case where bedtime is next day
-    if (bed < intake) {
-      bed.setDate(bed.getDate() + 1)
-    }
-    
-    const hoursElapsed = (bed - intake) / (1000 * 60 * 60)
-    const caffeineLeft = dose * Math.pow(0.5, hoursElapsed / halfLife)
-    
-    return Math.max(0, caffeineLeft)
-    }
-    
-    return 0 // No valid time information
+    return 0;
   }
 
   const calculateLatestSafeIntakeTime = (bedtime, halfLife, dose, threshold = safeSleepThreshold) => {
@@ -576,11 +604,10 @@ export default function CaffeineCalculator() {
     const labels = [];
     const datasets = [];
 
-    // Build x-axis labels
     for (let i = 0; i <= chartHours; i++) {
       const hour = i % 24;
       const day = Math.floor(i / 24);
-      labels.push(`${String(hour).padStart(2,'0')}:00${day ? ' (+1)' : ''}`);
+      labels.push(`${String(hour).padStart(2, '0')}:00${day ? ' (+1)' : ''}`);
     }
 
     const colors = [
@@ -599,21 +626,17 @@ export default function CaffeineCalculator() {
       const end = drink.endTimeString
         ? new Date(`${today.toDateString()} ${drink.endTimeString}`)
         : start;
-
       if (end < start) end.setDate(end.getDate() + 1);
 
-      const startOffsetHours =
-        (start.getHours() + start.getMinutes() / 60);
-
+      const startOffset = start.getHours() + start.getMinutes() / 60;
       const curve = calculateCaffeineCurve(start, end, parseFloat(drink.dose), halfLife, chartHours);
       const data = Array(chartHours + 1).fill(0);
 
       for (let j = 0; j < curve.length; j++) {
         const point = curve[j];
         const relHour = (point.time - start) / (1000 * 60 * 60);
-        const globalIndex = Math.round(startOffsetHours + relHour);
+        const globalIndex = Math.round(startOffset + relHour);
         if (globalIndex >= 0 && globalIndex < data.length) {
-          // Keep the maximum value when multiple curve points map to the same hour
           data[globalIndex] = Math.max(data[globalIndex], point.caffeine);
         }
       }
@@ -635,6 +658,7 @@ export default function CaffeineCalculator() {
     const now = Date.now()
     const newDrinks = [...drinks, { id: newId, name: '', dose: '', intakeTime: '', startTime: now, endTime: now, startTimeString: '', endTimeString: '', isEditing: true }]
     setDrinks(sortDrinksByTime(newDrinks))
+    setIsActivelyEditing(true)
   }
 
   const removeDrink = (id) => {
@@ -647,31 +671,21 @@ export default function CaffeineCalculator() {
     // Only update if the drink is in editing mode
     setDrinks(drinks.map(drink => {
       if (drink.id === id && drink.isEditing) {
-        const updatedDrink = { ...drink, [field]: value }
-        
-        // If the drink name is "Instant", ensure startTime === endTime
-        if (field === 'name' && value === 'Instant') {
-          const now = Date.now()
-          const currentTimeString = new Date().toTimeString().slice(0, 5) // HH:MM format
-          updatedDrink.startTime = now
-          updatedDrink.endTime = now
-          updatedDrink.startTimeString = currentTimeString
-          updatedDrink.endTimeString = currentTimeString
-        }
-        
-        return updatedDrink
+        return { ...drink, [field]: value }
       }
       return drink
     }))
   }
 
   const startEditing = (id) => {
+    setIsActivelyEditing(true)
     setDrinks(drinks.map(drink => 
       drink.id === id ? { ...drink, isEditing: true } : drink
     ))
   }
 
   const cancelEditing = (id) => {
+    setIsActivelyEditing(false)
     setDrinks(drinks.map(drink => 
       drink.id === id ? { ...drink, isEditing: false } : drink
     ))
@@ -686,10 +700,15 @@ export default function CaffeineCalculator() {
       return
     }
     
-    // Check both drinksDatabase and recentDrinks for the selected drink
+    // Check both drinksDatabase, recentDrinks, and customDrinks for the selected drink
     let selectedDrink = drinksDatabase.find(drink => drink.name === selectedDrinkName)
     
-    // If not found in database, check recent drinks (custom drinks)
+    // If not found in database, check custom drinks
+    if (!selectedDrink) {
+      selectedDrink = customDrinks.find(drink => drink.name === selectedDrinkName)
+    }
+    
+    // If not found in custom drinks, check recent drinks
     if (!selectedDrink) {
       selectedDrink = recentDrinks.find(drink => drink.name === selectedDrinkName)
     }
@@ -702,38 +721,98 @@ export default function CaffeineCalculator() {
       const now = Date.now()
       const currentTimeString = new Date().toTimeString().slice(0, 5) // HH:MM format
       
-      setDrinks(drinks.map(drink => 
-        drink.id === id ? { 
-          ...drink, 
-          name: selectedDrink.name, 
-          dose: selectedDrink.caffeine.toString(),
-          // If it's Instant, startTime === endTime, otherwise use current time as default
-          startTime: selectedDrink.isInstant ? now : now,
-          endTime: selectedDrink.isInstant ? now : now,
-          startTimeString: selectedDrink.isInstant ? currentTimeString : currentTimeString,
-          endTimeString: selectedDrink.isInstant ? currentTimeString : currentTimeString,
-          isEditing: false // Exit edit mode when a drink is selected from database
-        } : drink
-      ))
+      setDrinks(drinks.map(drink => {
+        if (drink.id === id) {
+          // Only set startTime if it's currently empty
+          const shouldSetStartTime = !drink.startTimeString
+          
+          return {
+            ...drink, 
+            name: selectedDrink.name, 
+            dose: selectedDrink.caffeine.toString(),
+            // Only set startTime and startTimeString if they're currently empty
+            startTime: shouldSetStartTime ? now : drink.startTime,
+            startTimeString: shouldSetStartTime ? currentTimeString : drink.startTimeString,
+            // Don't automatically set endTime - leave it empty for user to decide
+            // Keep isEditing true so user can adjust times/dose before clicking Done
+            isEditing: true
+          }
+        }
+        return drink
+      }))
     }
+  }
+  
+  // Custom drink modal handlers
+  const openCustomDrinkModal = (drinkToEdit = null) => {
+    if (drinkToEdit) {
+      setEditingCustomDrink(drinkToEdit)
+      setCustomDrinkForm({
+        name: drinkToEdit.name,
+        caffeine: drinkToEdit.caffeine.toString(),
+        category: drinkToEdit.category || 'Custom',
+        colorTag: drinkToEdit.colorTag || null
+      })
+    } else {
+      setEditingCustomDrink(null)
+      setCustomDrinkForm({
+        name: '',
+        caffeine: '',
+        category: 'Custom',
+        colorTag: null
+      })
+    }
+    setShowCustomDrinkModal(true)
+  }
+  
+  const closeCustomDrinkModal = () => {
+    setShowCustomDrinkModal(false)
+    setEditingCustomDrink(null)
+    setCustomDrinkForm({
+      name: '',
+      caffeine: '',
+      category: 'Custom',
+      colorTag: null
+    })
+  }
+  
+  const handleSaveCustomDrink = () => {
+    // Validate form
+    if (!customDrinkForm.name.trim() || !customDrinkForm.caffeine || parseFloat(customDrinkForm.caffeine) <= 0) {
+      alert('Please enter a valid drink name and caffeine amount.')
+      return
+    }
+    
+    if (editingCustomDrink) {
+      // Update existing custom drink
+      const updated = updateCustomDrink(editingCustomDrink.id, customDrinkForm)
+      if (updated) {
+        setCustomDrinks(loadCustomDrinks())
+      }
+    } else {
+      // Add new custom drink
+      const newDrink = addCustomDrink(customDrinkForm)
+      setCustomDrinks(loadCustomDrinks())
+    }
+    
+    closeCustomDrinkModal()
+  }
+  
+  const handleDeleteCustomDrink = (drinkId, event) => {
+    event.stopPropagation() // Prevent triggering the select
+    if (window.confirm('Are you sure you want to delete this custom drink?')) {
+      const updated = deleteCustomDrink(drinkId)
+      setCustomDrinks(updated)
+    }
+  }
+  
+  const handleEditCustomDrink = (drink, event) => {
+    event.stopPropagation() // Prevent triggering the select
+    openCustomDrinkModal(drink)
   }
 
   const createGroupedOptions = () => {
     const groups = []
-    
-    // Add "Create Custom Drink" option at the top
-    groups.push({
-      label: "Actions",
-      options: [{
-        value: "CREATE_CUSTOM_DRINK",
-        label: "➕ Create Custom Drink",
-        drink: { name: "CREATE_CUSTOM_DRINK", isCreateCustom: true }
-      }]
-    })
-    
-    // Separate custom drinks from other recent drinks
-    const customDrinks = recentDrinks.filter(drink => drink.isCustom)
-    const otherRecentDrinks = recentDrinks.filter(drink => !drink.isCustom)
     
     // Custom Drinks group (if there are any)
     if (customDrinks.length > 0) {
@@ -741,13 +820,36 @@ export default function CaffeineCalculator() {
         label: "My Custom Drinks",
         options: customDrinks.map(drink => ({
           value: drink.name,
-          label: `${drink.name} — ${drink.caffeine}mg`,
+          label: (
+            <div className="flex items-center justify-between w-full">
+              <span style={{ color: drink.colorTag || 'inherit' }}>
+                {drink.name} — {drink.caffeine}mg
+              </span>
+              <div className="flex space-x-1 ml-2">
+                <button
+                  onClick={(e) => handleEditCustomDrink(drink, e)}
+                  className="text-blue-600 hover:text-blue-800 px-1"
+                  title="Edit"
+                >
+                  ✏️
+                </button>
+                <button
+                  onClick={(e) => handleDeleteCustomDrink(drink.id, e)}
+                  className="text-red-600 hover:text-red-800 px-1"
+                  title="Delete"
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+          ),
           drink: drink
         }))
       })
     }
     
-    // Recent Drinks group (only if there are non-custom recent drinks)
+    // Recent Drinks group (only non-custom drinks)
+    const otherRecentDrinks = recentDrinks.filter(drink => !drink.isCustom)
     if (otherRecentDrinks.length > 0) {
       groups.push({
         label: "Recent Drinks",
@@ -826,7 +928,6 @@ export default function CaffeineCalculator() {
       if (d.id === id) {
         if (!d.isLogged) {
           // Convert to logged drink
-          const today = getTodayDate()
           const loggedDrink = {
             name: updatedDrink.name,
             dose: parseFloat(updatedDrink.dose),
@@ -837,8 +938,8 @@ export default function CaffeineCalculator() {
             endTimeString: updatedDrink.endTimeString || ''
           }
           
-          // Add to localStorage
-          const updatedData = addQuickDrink(today, loggedDrink)
+          // Add to localStorage for selected date
+          const updatedData = addQuickDrink(selectedDate, loggedDrink)
           setTodayData(updatedData)
           
           // Return as logged drink with new index
@@ -849,7 +950,6 @@ export default function CaffeineCalculator() {
           }
         } else {
           // Update existing logged drink in localStorage
-          const today = getTodayDate()
           const loggedUpdate = {
             name: updatedDrink.name,
             dose: parseFloat(updatedDrink.dose) || 0,
@@ -860,7 +960,7 @@ export default function CaffeineCalculator() {
             endTimeString: updatedDrink.endTimeString || ''
           }
           
-          const updatedData = updateTodayDrink(today, d.loggedIndex, loggedUpdate)
+          const updatedData = updateTodayDrink(selectedDate, d.loggedIndex, loggedUpdate)
           setTodayData(updatedData)
           
           return updatedDrink
@@ -873,6 +973,19 @@ export default function CaffeineCalculator() {
     setDrinks(sortDrinksByTime(updatedDrinks.map(d => 
       d.id === id ? { ...d, isEditing: false } : d
     )))
+    
+    // Exit editing mode and trigger save
+    setIsActivelyEditing(false)
+    
+    // Trigger explicit save with visual feedback
+    setSaveStatus('saving')
+    setTimeout(() => {
+      setSaveStatus('saved')
+      setLastSaveTime(new Date())
+      setTimeout(() => {
+        setSaveStatus('upToDate')
+      }, 2000)
+    }, 300)
   }
 
   // Handler for deleting drinks in unified list
@@ -882,15 +995,86 @@ export default function CaffeineCalculator() {
       const drink = drinks.find(d => d.id === drinkId)
       
       if (drink && drink.isLogged) {
-        // Delete from localStorage
-        const today = getTodayDate()
-        const updatedData = deleteTodayDrink(today, drink.loggedIndex)
+        // Delete from localStorage for selected date
+        const updatedData = deleteTodayDrink(selectedDate, drink.loggedIndex)
         setTodayData(updatedData)
       }
       
       // Remove from drinks list
       setDrinks(prev => prev.filter(d => d.id !== drinkId))
+      
+      // Exit editing mode if deleting currently edited drink
+      if (drink && drink.isEditing) {
+        setIsActivelyEditing(false)
+      }
+      
+      // Trigger explicit save with visual feedback
+      setSaveStatus('saving')
+      setTimeout(() => {
+        setSaveStatus('saved')
+        setLastSaveTime(new Date())
+        setTimeout(() => {
+          setSaveStatus('upToDate')
+        }, 2000)
+      }, 300)
     }
+  }
+  
+  // Format last save time for display
+  const formatSaveTime = () => {
+    if (!lastSaveTime) return ''
+    return lastSaveTime.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    })
+  }
+  
+  // Get save status display
+  const getSaveStatusDisplay = () => {
+    switch (saveStatus) {
+      case 'saving':
+        return {
+          text: 'Saving...',
+          color: isDarkMode ? 'text-yellow-400' : 'text-yellow-600',
+          showTime: false
+        }
+      case 'saved':
+        return {
+          text: '✓ Saved',
+          color: isDarkMode ? 'text-green-400' : 'text-green-600',
+          showTime: true
+        }
+      case 'upToDate':
+      default:
+        return {
+          text: 'Up to date',
+          color: isDarkMode ? 'text-gray-500' : 'text-gray-400',
+          showTime: false
+        }
+    }
+  }
+  
+  // Date selector helper functions
+  const formatSelectedDate = (dateString) => {
+    const date = new Date(dateString + 'T00:00:00')
+    const today = getTodayDate()
+    const isToday = dateString === today
+    
+    const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'long' })
+    const monthDay = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    
+    return isToday ? `${dayOfWeek}, ${monthDay} (Today)` : `${dayOfWeek}, ${monthDay}`
+  }
+  
+  const goToToday = () => {
+    setSelectedDate(getTodayDate())
+  }
+  
+  const changeDate = (days) => {
+    const currentDate = new Date(selectedDate + 'T00:00:00')
+    currentDate.setDate(currentDate.getDate() + days)
+    setSelectedDate(currentDate.toISOString().split('T')[0])
   }
 
 
@@ -922,20 +1106,110 @@ export default function CaffeineCalculator() {
           </button>
         </div>
         
-        <div className={`rounded-lg shadow-md p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+        {/* Date Selector */}
+        <div className={`rounded-lg shadow-md p-4 mb-6 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <span className="text-2xl">📅</span>
+              <div className="flex-1 sm:flex-initial">
+                <label className={`text-xs font-medium mb-1 block ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className={`px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    isDarkMode 
+                      ? 'bg-gray-700 border-gray-600 text-white' 
+                      : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                />
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-center">
+              <button
+                onClick={() => changeDate(-1)}
+                className={`p-2 rounded-md transition duration-200 ${
+                  isDarkMode 
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                }`}
+                title="Previous day"
+              >
+                ←
+              </button>
+              
+              <button
+                onClick={goToToday}
+                className={`px-4 py-2 rounded-md font-medium transition duration-200 ${
+                  selectedDate === getTodayDate()
+                    ? isDarkMode 
+                      ? 'bg-blue-900 text-blue-300 cursor-default' 
+                      : 'bg-blue-100 text-blue-700 cursor-default'
+                    : isDarkMode 
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
+                disabled={selectedDate === getTodayDate()}
+              >
+                Today
+              </button>
+              
+              <button
+                onClick={() => changeDate(1)}
+                className={`p-2 rounded-md transition duration-200 ${
+                  isDarkMode 
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                }`}
+                title="Next day"
+              >
+                →
+              </button>
+            </div>
+            
+            <div className={`text-center sm:text-right flex-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+              <p className="font-semibold">{formatSelectedDate(selectedDate)}</p>
+              {todayData.length > 0 && (
+                <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  {todayData.reduce((sum, drink) => sum + drink.dose, 0)} mg total
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        <div className={`rounded-lg shadow-md p-6 mb-8 transition-opacity duration-300 ${isTransitioning ? 'opacity-50' : 'opacity-100'} ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
           <form className="space-y-6">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Personal Information</h2>
-                {(personalInfo.age || personalInfo.sex || personalInfo.weight) && (
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    isDarkMode 
-                      ? 'text-green-400 bg-green-900' 
-                      : 'text-green-700 bg-green-200'
-                  }`}>
-                    ✓ Auto-saved
-                  </span>
-                )}
+                
+                {/* Auto-save Status */}
+                <div className="flex items-center gap-2">
+                  {isActivelyEditing ? (
+                    <span 
+                      className={`text-xs px-2 py-1 font-medium transition-opacity duration-300 ${
+                        isDarkMode ? 'text-orange-400' : 'text-orange-600'
+                      }`}
+                      title="Changes will be saved when you click Done"
+                    >
+                      Changes not saved
+                    </span>
+                  ) : (
+                    <span 
+                      className={`text-xs px-2 py-1 font-medium transition-opacity duration-300 ${getSaveStatusDisplay().color}`}
+                      title={lastSaveTime ? `Last saved ${formatSaveTime()}` : 'Auto-save enabled'}
+                    >
+                      {getSaveStatusDisplay().text}
+                      {getSaveStatusDisplay().showTime && lastSaveTime && (
+                        <span className="ml-1 opacity-75">· {formatSaveTime()}</span>
+                      )}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-lg ${
                 isDarkMode ? 'bg-blue-900' : 'bg-blue-50'
@@ -1035,7 +1309,16 @@ export default function CaffeineCalculator() {
             
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Your Drinks</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Your Drinks</h2>
+                  {saveStatus === 'saving' && (
+                    <span className={`text-xs px-2 py-0.5 rounded animate-pulse ${
+                      isDarkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-100 text-yellow-600'
+                    }`}>
+                      •
+                    </span>
+                  )}
+                </div>
                 {todayData.length > 0 && (
                   <span className={`text-sm px-3 py-1 rounded-full ${
                     isDarkMode 
@@ -1110,11 +1393,27 @@ export default function CaffeineCalculator() {
                   
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label className={`block text-sm font-medium mb-2 ${
+                      <div className="flex items-center justify-between mb-2">
+                        <label className={`block text-sm font-medium ${
                     isDarkMode ? 'text-gray-300' : 'text-gray-700'
                   }`}>
-                        Select Drink (Optional)
-                      </label>
+                          Select Drink (Optional)
+                        </label>
+                        {drink.isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => openCustomDrinkModal()}
+                            className={`px-2 py-1 text-xs rounded transition duration-200 ${
+                              isDarkMode 
+                                ? 'bg-blue-900 hover:bg-blue-800 text-blue-300' 
+                                : 'bg-blue-100 hover:bg-blue-200 text-blue-700'
+                            }`}
+                            title="Create a custom drink"
+                          >
+                            + Custom
+                          </button>
+                        )}
+                      </div>
                       <Select
                         value={drink.name && !drink.name.startsWith('Custom: ') ? { value: drink.name, label: `${drink.name} — ${drink.dose}mg` } : null}
                         onChange={(selectedOption) => {
@@ -1145,28 +1444,6 @@ export default function CaffeineCalculator() {
                           })
                         }}
                       />
-                      
-                      {/* Custom drink name input - show when editing and no drink selected from database */}
-                      {drink.isEditing && (
-                        <div className="mt-3">
-                          <label className={`block text-sm font-medium mb-2 ${
-                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
-                  }`}>
-                            Custom Drink Name
-                      </label>
-                      <input
-                        type="text"
-                            value={drink.name || ''}
-                        onChange={(e) => updateDrink(drink.id, 'name', e.target.value)}
-                            className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      isDarkMode 
-                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
-                        : 'bg-gray-50 border-gray-400 text-gray-900'
-                    }`}
-                            placeholder="e.g., My Custom Coffee Blend"
-                        />
-                      </div>
-                      )}
                     </div>
                     
                     <div>
@@ -1371,7 +1648,7 @@ export default function CaffeineCalculator() {
         )}
         
         {chartData && (
-          <div className={`rounded-lg shadow-md p-6 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+          <div className={`rounded-lg shadow-md p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
             <h2 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
               Caffeine Levels Over {chartHours > 24 ? '48 Hours' : '24 Hours'}
             </h2>
@@ -1458,90 +1735,70 @@ export default function CaffeineCalculator() {
                 }}
               />
             </div>
-          </div>
-        )}
-        
-        {/* History Section */}
-        <div className={`rounded-lg shadow-md p-4 sm:p-6 mb-8 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 space-y-2 sm:space-y-0">
-            <h2 className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Caffeine History</h2>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className={`px-3 py-2 text-sm rounded-md transition duration-200 self-start sm:self-auto ${
-              isDarkMode 
-                ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-            }`}
-            >
-              {showHistory ? 'Hide' : 'Show'} Past 7 Days
-            </button>
-          </div>
-          
-          {showHistory && (
-            <div className="space-y-3">
-              {historyData.map((day, index) => (
-                <Link 
-                  key={day.date}
-                  href={`/history/${day.date}`}
-                  className="block"
-                >
+            
+            {/* 7-Day Summary Button */}
+            <div className="mt-4 flex justify-center">
+              <button
+                onClick={() => setShow7DaySummary(!show7DaySummary)}
+                className={`px-4 py-2 rounded-md font-medium transition duration-200 ${
+                  isDarkMode 
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                }`}
+              >
+                {show7DaySummary ? 'Hide' : 'Show'} 7-Day Summary
+              </button>
+            </div>
+            
+            {/* 7-Day Summary View */}
+            {show7DaySummary && (
+              <div className="mt-6 space-y-2">
+                <h3 className={`text-lg font-semibold mb-3 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                  7-Day Caffeine Summary
+                </h3>
+                {historyData.map((day, index) => (
                   <div 
-                    className={`p-3 sm:p-4 rounded-lg border transition-all duration-200 cursor-pointer hover:shadow-md ${
-                      day.isToday 
-                        ? `border-blue-200 hover:border-blue-300 ${isDarkMode ? 'bg-blue-900 hover:bg-blue-800' : 'bg-blue-50 hover:bg-blue-100'}` 
-                        : `border-gray-200 hover:border-gray-300 ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`
+                    key={day.date}
+                    onClick={() => setSelectedDate(day.date)}
+                    className={`p-3 rounded-lg border cursor-pointer transition-all duration-200 ${
+                      selectedDate === day.date
+                        ? `border-blue-400 ${isDarkMode ? 'bg-blue-900' : 'bg-blue-100'}` 
+                        : `border-gray-300 hover:border-gray-400 ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`
                     }`}
                   >
-                    <div className="flex justify-between items-center mb-2">
-                      <div className="flex items-center space-x-2 min-w-0 flex-1">
-                        <span className={`font-medium text-sm sm:text-base ${day.isToday ? 'text-blue-800' : 'text-gray-800'} truncate`}>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center space-x-3">
+                        <span className={`font-medium ${day.isToday ? 'text-blue-600' : isDarkMode ? 'text-gray-300' : 'text-gray-800'}`}>
                           {day.dateDisplay}
-                          {day.isToday && <span className="ml-1 text-xs text-blue-600">(Today)</span>}
+                          {day.isToday && <span className="ml-1 text-xs">(Today)</span>}
                         </span>
-                        {day.total >= 400 && (
-                          <span className="text-orange-600 text-sm flex-shrink-0">⚠️</span>
-                        )}
+                        {day.total >= 400 && <span className="text-orange-600">⚠️</span>}
                       </div>
-                      <span className={`font-bold text-sm sm:text-base flex-shrink-0 ${day.total >= 400 ? 'text-orange-600' : 'text-gray-600'}`}>
-                        {day.total} mg
-                      </span>
+                      <div className="flex items-center space-x-3">
+                        <span className={`font-bold ${day.total >= 400 ? 'text-orange-600' : isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                          {day.total} mg
+                        </span>
+                        <div className="w-32 bg-gray-300 rounded-full h-2">
+                          <div 
+                            className={`h-2 rounded-full transition-all ${
+                              day.total >= 400 ? 'bg-orange-600' : 'bg-blue-600'
+                            }`}
+                            style={{ width: `${Math.min((day.total / 600) * 100, 100)}%` }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    
                     {day.drinks.length > 0 && (
-                      <div className="text-xs sm:text-sm text-gray-600 space-y-1">
-                        {day.drinks.slice(0, 3).map((drink, drinkIndex) => (
-                          <div key={drinkIndex} className="flex flex-col sm:flex-row sm:justify-between space-y-1 sm:space-y-0">
-                            <span className="font-medium">{drink.name} - {drink.dose} mg</span>
-                            <span className="text-gray-500">{
-                              new Date(`2000-01-01T${drink.time}`).toLocaleTimeString([], {
-                                hour: 'numeric',
-                                minute: '2-digit',
-                                hour12: true
-                              })
-                            }</span>
-                          </div>
-                        ))}
-                        {day.drinks.length > 3 && (
-                          <div className="text-xs text-gray-500 italic">
-                            ... and {day.drinks.length - 3} more drinks
-                          </div>
-                        )}
+                      <div className={`mt-2 text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                        {day.drinks.length} drink{day.drinks.length !== 1 ? 's' : ''} logged
                       </div>
                     )}
-                    
-                    {day.drinks.length === 0 && !day.isToday && (
-                      <div className="text-xs text-gray-500 italic">No caffeine logged</div>
-                    )}
-                    
-                    <div className="mt-2 text-xs text-gray-500">
-                      Click to view details →
-                    </div>
                   </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         
         {/* Disclaimer Footer */}
         <div className="mt-12 pt-6 border-t border-gray-200">
@@ -1550,6 +1807,168 @@ export default function CaffeineCalculator() {
           </p>
         </div>
       </div>
+      
+      {/* Custom Drink Modal */}
+      {showCustomDrinkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop with blur */}
+          <div 
+            className="absolute inset-0 bg-black bg-opacity-50 backdrop-blur-sm"
+            onClick={closeCustomDrinkModal}
+          ></div>
+          
+          {/* Modal Content */}
+          <div className={`relative w-full max-w-md rounded-lg shadow-xl p-6 ${
+            isDarkMode ? 'bg-gray-800' : 'bg-white'
+          }`}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className={`text-xl font-semibold ${
+                isDarkMode ? 'text-white' : 'text-gray-900'
+              }`}>
+                {editingCustomDrink ? 'Edit Custom Drink' : 'Create Custom Drink'}
+              </h2>
+              <button
+                onClick={closeCustomDrinkModal}
+                className={`text-2xl font-bold ${
+                  isDarkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Drink Name */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  Drink Name *
+                </label>
+                <input
+                  type="text"
+                  value={customDrinkForm.name}
+                  onChange={(e) => setCustomDrinkForm({...customDrinkForm, name: e.target.value})}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    isDarkMode 
+                      ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                      : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                  placeholder="e.g., My Special Coffee"
+                />
+              </div>
+              
+              {/* Caffeine Amount */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  Caffeine (mg) *
+                </label>
+                <input
+                  type="number"
+                  value={customDrinkForm.caffeine}
+                  onChange={(e) => setCustomDrinkForm({...customDrinkForm, caffeine: e.target.value})}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    isDarkMode 
+                      ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                      : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                  placeholder="e.g., 150"
+                  min="0"
+                  step="1"
+                />
+              </div>
+              
+              {/* Category */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  Category (Optional)
+                </label>
+                <select
+                  value={customDrinkForm.category}
+                  onChange={(e) => setCustomDrinkForm({...customDrinkForm, category: e.target.value})}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    isDarkMode 
+                      ? 'bg-gray-700 border-gray-600 text-white' 
+                      : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                >
+                  <option value="Custom">Custom</option>
+                  <option value="Coffee">Coffee</option>
+                  <option value="Tea">Tea</option>
+                  <option value="Energy Drink">Energy Drink</option>
+                  <option value="Preworkout">Preworkout</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              
+              {/* Color Tag */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  Color Tag (Optional)
+                </label>
+                <div className="flex space-x-2">
+                  {['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'].map(color => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => setCustomDrinkForm({...customDrinkForm, colorTag: color})}
+                      className={`w-8 h-8 rounded-full border-2 transition-all ${
+                        customDrinkForm.colorTag === color 
+                          ? 'border-gray-900 scale-110' 
+                          : 'border-gray-300 hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setCustomDrinkForm({...customDrinkForm, colorTag: null})}
+                    className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${
+                      customDrinkForm.colorTag === null 
+                        ? 'border-gray-900 scale-110' 
+                        : 'border-gray-300 hover:scale-105'
+                    } ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'}`}
+                    title="No color"
+                  >
+                    <span className="text-xs">×</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            {/* Modal Actions */}
+            <div className="flex space-x-3 mt-6">
+              <button
+                onClick={handleSaveCustomDrink}
+                className={`flex-1 px-4 py-2 rounded-md font-medium transition duration-200 ${
+                  isDarkMode 
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
+              >
+                {editingCustomDrink ? 'Update' : 'Save'}
+              </button>
+              <button
+                onClick={closeCustomDrinkModal}
+                className={`flex-1 px-4 py-2 rounded-md font-medium transition duration-200 ${
+                  isDarkMode 
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                }`}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
